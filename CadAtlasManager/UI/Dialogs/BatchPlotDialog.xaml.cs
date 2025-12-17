@@ -1,4 +1,4 @@
-﻿using CadAtlasManager.Models; // 引用模型
+﻿using CadAtlasManager.Models;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -10,10 +10,7 @@ namespace CadAtlasManager.UI
     {
         private List<PlotCandidate> _candidates;
 
-        // 对外输出的配置结果
         public BatchPlotConfig FinalConfig { get; private set; }
-
-        // 用户最终确认要打印的文件路径列表
         public List<string> ConfirmedFiles { get; private set; }
 
         public BatchPlotDialog(List<PlotCandidate> candidates)
@@ -23,103 +20,95 @@ namespace CadAtlasManager.UI
             LvFiles.ItemsSource = _candidates;
             TxtCount.Text = $"共 {_candidates.Count} 个文件";
 
-            // 初始化加载数据
             LoadInitialData();
+            UpdateScaleUiState(); // 初始化状态
         }
 
         private void LoadInitialData()
         {
-            // 1. 读取历史配置
             var config = ConfigManager.Load() ?? new AppConfig();
-
-            // 填入图框名
             TbBlockNames.Text = config.TitleBlockNames ?? "TK,A3图框";
 
-            // 2. 获取 CAD 环境数据 (打印机列表)
+            // 打印机
             var plotters = CadService.GetPlotters();
             CbPrinters.ItemsSource = plotters;
-
-            // 尝试选中上次使用的打印机，如果没有则选 PDF
             string lastPrinter = !string.IsNullOrEmpty(config.LastPrinter) ? config.LastPrinter : "DWG To PDF.pc3";
+            if (plotters.Contains(lastPrinter)) CbPrinters.SelectedItem = lastPrinter;
+            else if (plotters.Count > 0) CbPrinters.SelectedIndex = 0;
 
-            if (plotters.Contains(lastPrinter))
-            {
-                CbPrinters.SelectedItem = lastPrinter;
-            }
-            else if (plotters.Count > 0)
-            {
-                CbPrinters.SelectedIndex = 0;
-            }
-
-            // 3. 获取样式表列表
+            // 样式表
             var styles = CadService.GetStyleSheets();
             CbStyles.ItemsSource = styles;
-
             string lastStyle = !string.IsNullOrEmpty(config.LastStyleSheet) ? config.LastStyleSheet : "monochrome.ctb";
             if (styles.Contains(lastStyle)) CbStyles.SelectedItem = lastStyle;
         }
 
-        // 当打印机改变时，更新纸张列表
+        // 打印机改变，联动纸张
         private void CbPrinters_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CbPrinters.SelectedItem == null) return;
             string device = CbPrinters.SelectedItem.ToString();
-
-            // 获取该设备支持的纸张
             var mediaList = CadService.GetMediaList(device);
             CbPaper.ItemsSource = mediaList;
 
-            // 尝试选中上次使用的纸张，或者默认 A3
             var config = ConfigManager.Load();
             string lastMedia = config?.LastMedia;
-
             if (!string.IsNullOrEmpty(lastMedia) && mediaList.Contains(lastMedia))
-            {
                 CbPaper.SelectedItem = lastMedia;
-            }
             else
             {
-                // 智能默认：优先选 A3
                 var a3 = mediaList.FirstOrDefault(m => m.ToUpper().Contains("A3"));
                 if (a3 != null) CbPaper.SelectedItem = a3;
                 else if (mediaList.Count > 0) CbPaper.SelectedIndex = 0;
             }
         }
 
-        // 表头全选框逻辑
-        private void HeaderCheckBox_Click(object sender, RoutedEventArgs e)
+        // 交互逻辑：勾选"布满"时，禁用比例输入框
+        private void ChkFitToPaper_CheckedChanged(object sender, RoutedEventArgs e)
         {
-            if (sender is CheckBox chk)
-            {
-                bool val = chk.IsChecked == true;
-                foreach (var item in _candidates) item.IsSelected = val;
-                // 刷新列表视图
-                LvFiles.Items.Refresh();
-            }
+            UpdateScaleUiState();
         }
 
-        // 点击“开始打印”
+        // 交互逻辑：勾选"居中"时，禁用偏移输入框
+        private void ChkCenterPlot_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            UpdateScaleUiState();
+        }
+
+        private void UpdateScaleUiState()
+        {
+            if (CbScale == null || TbOffsetX == null) return;
+
+            bool isFit = ChkFitToPaper.IsChecked == true;
+            CbScale.IsEnabled = !isFit;
+
+            bool isCenter = ChkCenterPlot.IsChecked == true;
+            TbOffsetX.IsEnabled = !isCenter;
+            TbOffsetY.IsEnabled = !isCenter;
+        }
+
         private void BtnPrint_Click(object sender, RoutedEventArgs e)
         {
-            // 1. 基础校验
             ConfirmedFiles = _candidates.Where(c => c.IsSelected).Select(c => c.FilePath).ToList();
-            if (ConfirmedFiles.Count == 0)
+            if (ConfirmedFiles.Count == 0) { MessageBox.Show("请至少勾选一个文件。"); return; }
+            if (CbPrinters.SelectedItem == null || CbPaper.SelectedItem == null) { MessageBox.Show("请选择打印机和纸张。"); return; }
+            if (string.IsNullOrWhiteSpace(TbBlockNames.Text)) { MessageBox.Show("请输入图框块名。"); return; }
+
+            // 解析偏移
+            double offX = 0, offY = 0;
+            double.TryParse(TbOffsetX.Text, out offX);
+            double.TryParse(TbOffsetY.Text, out offY);
+
+            // 解析比例
+            // 如果勾选布满，则 Type="Fit"
+            // 否则取下拉框的值（可能是 "1:100" 或 "1:1" 等）
+            string scaleStr = "Fit";
+            if (ChkFitToPaper.IsChecked == false)
             {
-                MessageBox.Show("请至少勾选一个要打印的文件。", "提示");
-                return;
-            }
-            if (CbPrinters.SelectedItem == null || CbPaper.SelectedItem == null)
-            {
-                MessageBox.Show("请选择【打印机】和【默认纸张】。", "参数缺失");
-                return;
-            }
-            if (string.IsNullOrWhiteSpace(TbBlockNames.Text))
-            {
-                MessageBox.Show("请输入【图框块名】，否则无法识别打印区域。", "参数缺失");
-                return;
+                scaleStr = CbScale.Text.Trim();
+                if (string.IsNullOrEmpty(scaleStr)) scaleStr = "1:1"; // 默认兜底
             }
 
-            // 2. 生成配置对象
             FinalConfig = new BatchPlotConfig
             {
                 PrinterName = CbPrinters.SelectedItem.ToString(),
@@ -127,10 +116,15 @@ namespace CadAtlasManager.UI
                 StyleSheet = CbStyles.SelectedItem?.ToString(),
                 TitleBlockNames = TbBlockNames.Text.Trim(),
                 AutoRotate = ChkAutoRotate.IsChecked == true,
-                UseStandardScale = true
+                OrderType = (RbOrderV.IsChecked == true) ? PlotOrderType.Vertical : PlotOrderType.Horizontal,
+
+                ScaleType = scaleStr,
+                PlotCentered = ChkCenterPlot.IsChecked == true,
+                OffsetX = offX,
+                OffsetY = offY
             };
 
-            // 3. 保存本次配置到磁盘 (记忆功能)
+            // 保存记忆
             try
             {
                 var config = ConfigManager.Load() ?? new AppConfig();
@@ -140,10 +134,19 @@ namespace CadAtlasManager.UI
                 config.LastStyleSheet = FinalConfig.StyleSheet;
                 ConfigManager.Save(config);
             }
-            catch { /* 保存失败不影响打印 */ }
+            catch { }
 
-            // 4. 关闭窗口，返回成功
             DialogResult = true;
+        }
+
+        private void HeaderCheckBox_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is CheckBox chk)
+            {
+                bool val = chk.IsChecked == true;
+                foreach (var item in _candidates) item.IsSelected = val;
+                LvFiles.Items.Refresh();
+            }
         }
     }
 }

@@ -23,6 +23,10 @@
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Padding" Value="2"/>
         </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+        </Style>
     </Window.Resources>
 
     <Grid Margin="15">
@@ -33,31 +37,77 @@
         </Grid.ColumnDefinitions>
 
         <Border Grid.Column="0" Background="White" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" Padding="15">
-            <StackPanel>
-                <TextBlock Text="🖨️ 打印机 / 绘图仪" FontWeight="Bold" Margin="0,0,0,8"/>
-                <ComboBox x:Name="CbPrinters" SelectionChanged="CbPrinters_SelectionChanged"/>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,5,0">
+                <StackPanel>
+                    <TextBlock Text="🖨️ 打印机 / 绘图仪" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <ComboBox x:Name="CbPrinters" SelectionChanged="CbPrinters_SelectionChanged"/>
 
-                <TextBlock Text="📄 默认纸张" FontWeight="Bold" Margin="0,0,0,8"/>
-                <ComboBox x:Name="CbPaper"/>
-                <TextBlock Text="* 插件会优先尝试匹配图框的实际尺寸。如果匹配失败（非标尺寸），将使用此默认纸张。" 
-                           FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,-8,0,12"/>
+                    <GroupBox Header="打印顺序" Margin="0,5">
+                        <StackPanel Orientation="Horizontal" Margin="5">
+                            <RadioButton Name="RbOrderH" Content="横向 (Z字)" IsChecked="True" Margin="0,0,15,0" GroupName="Order"/>
+                            <RadioButton Name="RbOrderV" Content="竖向 (N字)" GroupName="Order"/>
+                        </StackPanel>
+                    </GroupBox>
 
-                <TextBlock Text="🎨 打印样式表 (CTB/STB)" FontWeight="Bold" Margin="0,0,0,8"/>
-                <ComboBox x:Name="CbStyles"/>
+                    <GroupBox Header="比例与偏移" Margin="0,5">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                <Separator Margin="0,10"/>
+                            <TextBlock Text="模式:" VerticalAlignment="Center" Margin="5"/>
+                            <CheckBox Name="ChkFitToPaper" Grid.Column="1" Grid.ColumnSpan="3" Content="布满图纸 (Fit)" 
+                                      IsChecked="True" Margin="2,8" Checked="ChkFitToPaper_CheckedChanged" Unchecked="ChkFitToPaper_CheckedChanged"/>
 
-                <TextBlock Text="📦 图框识别设置" FontWeight="Bold" Margin="0,10,0,8"/>
-                <TextBlock Text="图框块名 (逗号分隔):" Margin="0,0,0,4" FontSize="12"/>
-                <TextBox x:Name="TbBlockNames" Margin="0,0,0,4"/>
-                <TextBlock Text="例如: TK, A3图框, MyBorder" FontSize="11" Foreground="Gray" Margin="0,0,0,15"/>
+                            <TextBlock Text="比例:" Grid.Row="1" VerticalAlignment="Center" Margin="5"/>
+                            <ComboBox Name="CbScale" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Margin="2,2,2,8" 
+                                      IsEditable="True" IsEnabled="False">
+                                <ComboBoxItem Content="1:1"/>
+                                <ComboBoxItem Content="1:50"/>
+                                <ComboBoxItem Content="1:100"/>
+                                <ComboBoxItem Content="1:200"/>
+                                <ComboBoxItem Content="1:500"/>
+                            </ComboBox>
 
-                <CheckBox x:Name="ChkAutoRotate" Content="自动旋转 &amp; 布满图纸" IsChecked="True" Margin="0,5,0,20" FontWeight="SemiBold"/>
+                            <TextBlock Text="偏移 X:" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="5"/>
+                            <TextBox Name="TbOffsetX" Grid.Row="2" Grid.Column="1" Text="0" Margin="2" IsEnabled="False"/>
 
-                <Button x:Name="BtnPrint" Content="🚀 开始批量打印" Click="BtnPrint_Click"
-                        Height="40" Background="#007ACC" Foreground="White" FontWeight="Bold" 
-                        Cursor="Hand" BorderThickness="0"/>
-            </StackPanel>
+                            <TextBlock Text="偏移 Y:" Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Margin="5"/>
+                            <TextBox Name="TbOffsetY" Grid.Row="2" Grid.Column="3" Text="0" Margin="2" IsEnabled="False"/>
+
+                            <CheckBox Name="ChkCenterPlot" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Content="居中打印" 
+                                      IsChecked="True" Margin="5,5,0,0" Checked="ChkCenterPlot_CheckedChanged" Unchecked="ChkCenterPlot_CheckedChanged"/>
+                        </Grid>
+                    </GroupBox>
+
+                    <TextBlock Text="📄 默认纸张" FontWeight="Bold" Margin="0,5,0,8"/>
+                    <ComboBox x:Name="CbPaper"/>
+
+                    <TextBlock Text="🎨 打印样式表 (CTB/STB)" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <ComboBox x:Name="CbStyles"/>
+
+                    <Separator Margin="0,10"/>
+
+                    <TextBlock Text="📦 图框识别设置" FontWeight="Bold" Margin="0,5,0,8"/>
+                    <TextBlock Text="图框块名 (逗号分隔):" Margin="0,0,0,4" FontSize="12"/>
+                    <TextBox x:Name="TbBlockNames" Margin="0,0,0,15"/>
+
+                    <CheckBox x:Name="ChkAutoRotate" Content="自动旋转 (适应纸张方向)" IsChecked="True" Margin="0,0,0,20" FontWeight="SemiBold"/>
+
+                    <Button x:Name="BtnPrint" Content="🚀 开始批量打印" Click="BtnPrint_Click"
+                            Height="40" Background="#007ACC" Foreground="White" FontWeight="Bold" 
+                            Cursor="Hand" BorderThickness="0"/>
+                </StackPanel>
+            </ScrollViewer>
         </Border>
 
         <Grid Grid.Column="2">
