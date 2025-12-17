@@ -21,7 +21,9 @@ namespace CadAtlasManager.UI
             TxtCount.Text = $"共 {_candidates.Count} 个文件";
 
             LoadInitialData();
-            UpdateScaleUiState(); // 初始化状态
+            // 注意：LoadInitialData 内部会根据配置设置 CheckBox，从而触发 CheckedChanged 事件
+            // 为了确保状态一致，最后再显式调用一次 UI 状态更新
+            UpdateScaleUiState();
         }
 
         private void LoadInitialData()
@@ -29,18 +31,40 @@ namespace CadAtlasManager.UI
             var config = ConfigManager.Load() ?? new AppConfig();
             TbBlockNames.Text = config.TitleBlockNames ?? "TK,A3图框";
 
-            // 打印机
+            // 1. 打印机
             var plotters = CadService.GetPlotters();
             CbPrinters.ItemsSource = plotters;
             string lastPrinter = !string.IsNullOrEmpty(config.LastPrinter) ? config.LastPrinter : "DWG To PDF.pc3";
             if (plotters.Contains(lastPrinter)) CbPrinters.SelectedItem = lastPrinter;
             else if (plotters.Count > 0) CbPrinters.SelectedIndex = 0;
 
-            // 样式表
+            // 2. 样式表
             var styles = CadService.GetStyleSheets();
             CbStyles.ItemsSource = styles;
             string lastStyle = !string.IsNullOrEmpty(config.LastStyleSheet) ? config.LastStyleSheet : "monochrome.ctb";
             if (styles.Contains(lastStyle)) CbStyles.SelectedItem = lastStyle;
+
+            // --- 修改3: 恢复上一次的参数设置 ---
+
+            // 打印顺序
+            if (config.LastOrderType == PlotOrderType.Vertical) RbOrderV.IsChecked = true;
+            else RbOrderH.IsChecked = true;
+
+            // 布满图纸 (默认按配置，如果配置是默认值则为 False)
+            ChkFitToPaper.IsChecked = config.LastFitToPaper;
+
+            // 比例 (默认 "1:1")
+            CbScale.Text = !string.IsNullOrEmpty(config.LastScaleType) ? config.LastScaleType : "1:1";
+
+            // 居中打印
+            ChkCenterPlot.IsChecked = config.LastCenterPlot;
+
+            // 偏移
+            TbOffsetX.Text = config.LastOffsetX.ToString();
+            TbOffsetY.Text = config.LastOffsetY.ToString();
+
+            // 自动旋转
+            ChkAutoRotate.IsChecked = config.LastAutoRotate;
         }
 
         // 打印机改变，联动纸张
@@ -124,14 +148,26 @@ namespace CadAtlasManager.UI
                 OffsetY = offY
             };
 
-            // 保存记忆
+            // --- 修改3: 保存打印参数设置 ---
             try
             {
                 var config = ConfigManager.Load() ?? new AppConfig();
+
+                // 基础设置
                 config.TitleBlockNames = FinalConfig.TitleBlockNames;
                 config.LastPrinter = FinalConfig.PrinterName;
                 config.LastMedia = FinalConfig.MediaName;
                 config.LastStyleSheet = FinalConfig.StyleSheet;
+
+                // 扩展设置 (新功能)
+                config.LastOrderType = FinalConfig.OrderType;
+                config.LastAutoRotate = FinalConfig.AutoRotate;
+                config.LastFitToPaper = ChkFitToPaper.IsChecked == true;
+                config.LastScaleType = CbScale.Text.Trim(); // 保存下拉框的文本，而不是 FinalConfig.ScaleType (因为后者如果是Fit会被覆盖)
+                config.LastCenterPlot = FinalConfig.PlotCentered;
+                config.LastOffsetX = FinalConfig.OffsetX;
+                config.LastOffsetY = FinalConfig.OffsetY;
+
                 ConfigManager.Save(config);
             }
             catch { }

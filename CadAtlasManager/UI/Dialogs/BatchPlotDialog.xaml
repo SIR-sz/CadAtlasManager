@@ -65,13 +65,19 @@
                             </Grid.RowDefinitions>
 
                             <TextBlock Text="模式:" VerticalAlignment="Center" Margin="5"/>
-                            <CheckBox Name="ChkFitToPaper" Grid.Column="1" Grid.ColumnSpan="3" Content="布满图纸 (Fit)" 
-                                      IsChecked="True" Margin="2,8" Checked="ChkFitToPaper_CheckedChanged" Unchecked="ChkFitToPaper_CheckedChanged"/>
+                            <CheckBox Name="ChkFitToPaper" Grid.Column="1" Grid.ColumnSpan="3" Content="布满图纸" 
+                                      IsChecked="False" Margin="2,8" Checked="ChkFitToPaper_CheckedChanged" Unchecked="ChkFitToPaper_CheckedChanged"/>
 
                             <TextBlock Text="比例:" Grid.Row="1" VerticalAlignment="Center" Margin="5"/>
                             <ComboBox Name="CbScale" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Margin="2,2,2,8" 
-                                      IsEditable="True" IsEnabled="False">
+                                      IsEditable="True" IsEnabled="True">
                                 <ComboBoxItem Content="1:1"/>
+                                <ComboBoxItem Content="1:2"/>
+                                <ComboBoxItem Content="1:4"/>
+                                <ComboBoxItem Content="1:5"/>
+                                <ComboBoxItem Content="1:8"/>
+                                <ComboBoxItem Content="1:10"/>
+                                <ComboBoxItem Content="1:20"/>
                                 <ComboBoxItem Content="1:50"/>
                                 <ComboBoxItem Content="1:100"/>
                                 <ComboBoxItem Content="1:200"/>
@@ -95,9 +101,7 @@
                     <TextBlock Text="🎨 打印样式表 (CTB/STB)" FontWeight="Bold" Margin="0,0,0,8"/>
                     <ComboBox x:Name="CbStyles"/>
 
-                    <Separator Margin="0,10"/>
-
-                    <TextBlock Text="📦 图框识别设置" FontWeight="Bold" Margin="0,5,0,8"/>
+                    <TextBlock Text="📦 图框识别设置" FontWeight="Bold" Margin="0,20,0,8"/>
                     <TextBlock Text="图框块名 (逗号分隔):" Margin="0,0,0,4" FontSize="12"/>
                     <TextBox x:Name="TbBlockNames" Margin="0,0,0,15"/>
 
@@ -126,11 +130,15 @@
                     <GridView>
                         <GridViewColumn Width="40">
                             <GridViewColumn.Header>
-                                <CheckBox ToolTip="全选/反选" IsChecked="True" Click="HeaderCheckBox_Click"/>
+                                <Grid HorizontalAlignment="Center">
+                                    <CheckBox ToolTip="全选/反选" IsChecked="False" Click="HeaderCheckBox_Click"/>
+                                </Grid>
                             </GridViewColumn.Header>
                             <GridViewColumn.CellTemplate>
                                 <DataTemplate>
-                                    <CheckBox IsChecked="{Binding IsSelected}"/>
+                                    <Grid HorizontalAlignment="Center">
+                                        <CheckBox IsChecked="{Binding IsSelected}"/>
+                                    </Grid>
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>

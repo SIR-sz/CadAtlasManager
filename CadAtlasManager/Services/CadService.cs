@@ -17,8 +17,34 @@ namespace CadAtlasManager
         public void Terminate() { }
 
         // --- 基础 API ---
-        public static string GetSmartFingerprint(string dwgPath) => "0";
-        public static void InsertDwgAsBlock(string f) { }
+        public static string GetSmartFingerprint(string dwgPath)
+        {
+            // 简单的指纹实现，使用最后修改时间 ticks
+            if (!File.Exists(dwgPath)) return "0";
+            return File.GetLastWriteTimeUtc(dwgPath).Ticks.ToString();
+        }
+
+        // 【修复】实现插入图块逻辑
+        public static void InsertDwgAsBlock(string f)
+        {
+            if (!File.Exists(f)) return;
+
+            Document doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
+            // 1. 将焦点设置回 CAD 文档窗口，否则命令可能发不出去
+            doc.Window.Focus();
+
+            // 2. 构造命令：-INSERT "路径" 
+            // 注意：
+            // (1) 文件名必须加引号，防止路径中有空格导致命令中断。
+            // (2) 字符串末尾加一个空格，代表命令确认。
+            // (3) 此时 CAD 会进入 "指定插入点" 的状态，用户可以直接在屏幕上点击。
+            string cmd = $"-INSERT \"{f}\" ";
+
+            // 3. 发送命令
+            doc.SendStringToExecute(cmd, true, false, false);
+        }
 
         public static void OpenDwg(string sourcePath, string mode, string targetCopyPath = null)
         {

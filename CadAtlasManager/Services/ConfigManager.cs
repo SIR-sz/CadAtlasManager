@@ -12,11 +12,20 @@ namespace CadAtlasManager
         public List<ProjectItem> Projects { get; set; } = new List<ProjectItem>();
         public string LastActiveProjectPath { get; set; } = "";
 
-        // --- 打印相关配置 (新增) ---
+        // --- 打印相关配置 ---
         public string TitleBlockNames { get; set; } = "TK,A3图框";
         public string LastPrinter { get; set; } = "DWG To PDF.pc3";
         public string LastStyleSheet { get; set; } = "monochrome.ctb";
         public string LastMedia { get; set; } = "";
+
+        // --- 修改3: 新增字段用于记录上一次打印参数 ---
+        public PlotOrderType LastOrderType { get; set; } = PlotOrderType.Horizontal;
+        public bool LastFitToPaper { get; set; } = false; // 默认不勾选布满
+        public string LastScaleType { get; set; } = "1:1"; // 默认 1:1
+        public bool LastCenterPlot { get; set; } = true;
+        public double LastOffsetX { get; set; } = 0.0;
+        public double LastOffsetY { get; set; } = 0.0;
+        public bool LastAutoRotate { get; set; } = true;
     }
 
     public static class ConfigManager
@@ -47,7 +56,7 @@ namespace CadAtlasManager
         }
 
         // =================================================================
-        // 【新增方法】直接保存配置对象 (用于 BatchPlotDialog 调用)
+        // 直接保存配置对象
         // =================================================================
         public static void Save(AppConfig config)
         {
@@ -69,7 +78,7 @@ namespace CadAtlasManager
         }
 
         // =================================================================
-        // 【兼容旧代码】只更新列表，不覆盖其他字段 (如 TitleBlockNames)
+        // 【兼容旧代码】只更新列表，不覆盖其他字段
         // =================================================================
         public static void Save(List<string> folders, IEnumerable<ProjectItem> projects, string activePath)
         {
