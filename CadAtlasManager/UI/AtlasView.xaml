@@ -110,7 +110,7 @@
                                     </Style>
                                 </ToggleButton.Style>
                             </ToggleButton>
-                            <Border x:Name="Bd" Grid.Column="1" Padding="5,2" CornerRadius="2" BorderThickness="1" BorderBrush="Transparent">
+                            <Border x:Name="Bd" Grid.Column="1" Padding="5,2" CornerRadius="2" BorderThickness="1" BorderBrush="Transparent" Background="Transparent">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Style.Triggers>
@@ -193,7 +193,7 @@
                               ItemTemplate="{StaticResource FileSystemTemplate}"
                               MouseDoubleClick="FileTree_MouseDoubleClick"
                               PreviewMouseLeftButtonDown="OnTreeItemClick"
-                              SelectedItemChanged="OnTreeSelectionChanged">
+                              PreviewMouseRightButtonDown="OnTreeItemRightClick"  SelectedItemChanged="OnTreeSelectionChanged">
                     </TreeView>
 
                     <TextBlock Grid.Row="4" Text="Ctrl+点击多选 | Shift+点击连选" Foreground="Gray" FontSize="10" HorizontalAlignment="Center" Margin="5"/>
@@ -247,7 +247,7 @@
                               MouseDoubleClick="ProjectTree_MouseDoubleClick"
                               AllowDrop="True"
                               PreviewMouseLeftButtonDown="OnTreeItemClick"
-                              SelectedItemChanged="OnTreeSelectionChanged"
+                              PreviewMouseRightButtonDown="OnTreeItemRightClick"  SelectedItemChanged="OnTreeSelectionChanged"
                               MouseMove="ProjectTree_MouseMove"
                               Drop="ProjectTree_Drop">
                         <TreeView.ItemContainerStyle>
@@ -288,7 +288,8 @@
                     <TreeView Name="PlotTree" Grid.Row="2" Margin="0,25,0,0"
                               ItemTemplate="{StaticResource FileSystemTemplate}"
                               BorderThickness="1" BorderBrush="#eee" Background="White"
-                              MouseDoubleClick="PlotTree_MouseDoubleClick">
+                              MouseDoubleClick="PlotTree_MouseDoubleClick"
+                              PreviewMouseRightButtonDown="OnTreeItemRightClick">
                         <TreeView.ItemContainerStyle>
                             <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                                 <Setter Property="ContextMenu" Value="{StaticResource PlotContextMenu}"/>

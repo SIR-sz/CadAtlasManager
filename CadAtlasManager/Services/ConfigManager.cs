@@ -12,8 +12,11 @@ namespace CadAtlasManager
         public List<ProjectItem> Projects { get; set; } = new List<ProjectItem>();
         public string LastActiveProjectPath { get; set; } = "";
 
-        // 【新增】图框名称配置，默认包含 TK 和 A3图框
+        // --- 打印相关配置 (新增) ---
         public string TitleBlockNames { get; set; } = "TK,A3图框";
+        public string LastPrinter { get; set; } = "DWG To PDF.pc3";
+        public string LastStyleSheet { get; set; } = "monochrome.ctb";
+        public string LastMedia { get; set; } = "";
     }
 
     public static class ConfigManager

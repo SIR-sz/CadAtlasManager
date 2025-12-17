@@ -79,6 +79,7 @@
     <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\BatchPlotConfig.cs" />
     <Compile Include="Services\CadService.cs" />
     <Compile Include="Services\ConfigManager.cs" />
     <Compile Include="MainPlugin.cs" />
@@ -97,8 +98,10 @@
     <Compile Include="UI\Dialogs\RenameDialog.xaml.cs">
       <DependentUpon>RenameDialog.xaml</DependentUpon>
     </Compile>
-    <Compile Include="UI\Dialogs\BatchPlotDialog.cs" />
     <Compile Include="UI\Dialogs\CopyMoveDialog.cs" />
+    <Compile Include="UI\Dialogs\BatchPlotDialog.xaml.cs">
+      <DependentUpon>BatchPlotDialog.xaml</DependentUpon>
+    </Compile>
     <Compile Include="UI\Dialogs\ZipSaveDialog.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -111,6 +114,10 @@
       <Generator>MSBuild:Compile</Generator>
     </Page>
     <Page Include="UI\Dialogs\RenameDialog.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="UI\Dialogs\BatchPlotDialog.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

@@ -1,0 +1,102 @@
+﻿<Window x:Class="CadAtlasManager.UI.BatchPlotDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="批量打印设置 (Pro)" Height="600" Width="900" 
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Background="#F5F5F5">
+
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Foreground" Value="#333"/>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+            <Setter Property="Padding" Value="4"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Padding" Value="2"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="15">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="320"/>
+            <ColumnDefinition Width="20"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="White" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" Padding="15">
+            <StackPanel>
+                <TextBlock Text="🖨️ 打印机 / 绘图仪" FontWeight="Bold" Margin="0,0,0,8"/>
+                <ComboBox x:Name="CbPrinters" SelectionChanged="CbPrinters_SelectionChanged"/>
+
+                <TextBlock Text="📄 默认纸张" FontWeight="Bold" Margin="0,0,0,8"/>
+                <ComboBox x:Name="CbPaper"/>
+                <TextBlock Text="* 插件会优先尝试匹配图框的实际尺寸。如果匹配失败（非标尺寸），将使用此默认纸张。" 
+                           FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,-8,0,12"/>
+
+                <TextBlock Text="🎨 打印样式表 (CTB/STB)" FontWeight="Bold" Margin="0,0,0,8"/>
+                <ComboBox x:Name="CbStyles"/>
+
+                <Separator Margin="0,10"/>
+
+                <TextBlock Text="📦 图框识别设置" FontWeight="Bold" Margin="0,10,0,8"/>
+                <TextBlock Text="图框块名 (逗号分隔):" Margin="0,0,0,4" FontSize="12"/>
+                <TextBox x:Name="TbBlockNames" Margin="0,0,0,4"/>
+                <TextBlock Text="例如: TK, A3图框, MyBorder" FontSize="11" Foreground="Gray" Margin="0,0,0,15"/>
+
+                <CheckBox x:Name="ChkAutoRotate" Content="自动旋转 &amp; 布满图纸" IsChecked="True" Margin="0,5,0,20" FontWeight="SemiBold"/>
+
+                <Button x:Name="BtnPrint" Content="🚀 开始批量打印" Click="BtnPrint_Click"
+                        Height="40" Background="#007ACC" Foreground="White" FontWeight="Bold" 
+                        Cursor="Hand" BorderThickness="0"/>
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                <TextBlock Text="📚 待打印文件列表" FontWeight="Bold" FontSize="14" DockPanel.Dock="Left"/>
+                <TextBlock x:Name="TxtCount" Text="共 0 个文件" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="Gray"/>
+            </DockPanel>
+
+            <ListView x:Name="LvFiles" Grid.Row="1" BorderThickness="1" BorderBrush="#DDD" Background="White">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Width="40">
+                            <GridViewColumn.Header>
+                                <CheckBox ToolTip="全选/反选" IsChecked="True" Click="HeaderCheckBox_Click"/>
+                            </GridViewColumn.Header>
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <CheckBox IsChecked="{Binding IsSelected}"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+
+                        <GridViewColumn Header="文件名" Width="280">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding FileName}" ToolTip="{Binding FilePath}"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+
+                        <GridViewColumn Header="状态" Width="100" DisplayMemberBinding="{Binding VersionStatus}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </Grid>
+    </Grid>
+</Window>
