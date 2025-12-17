@@ -255,8 +255,13 @@
                               BorderThickness="1" BorderBrush="#eee" Background="White" 
                               MouseDoubleClick="ProjectTree_MouseDoubleClick"
                               AllowDrop="True"
-                              PreviewMouseLeftButtonDown="OnTreeItemClick"
-                              PreviewMouseRightButtonDown="OnTreeItemRightClick"  SelectedItemChanged="OnTreeSelectionChanged"
+
+                              PreviewMouseLeftButtonDown="ProjectTree_PreviewMouseLeftButtonDown"
+                              
+                              PreviewMouseLeftButtonUp="ProjectTree_PreviewMouseLeftButtonUp"
+
+                              PreviewMouseRightButtonDown="OnTreeItemRightClick"  
+                              SelectedItemChanged="OnTreeSelectionChanged"
                               MouseMove="ProjectTree_MouseMove"
                               Drop="ProjectTree_Drop">
                         <TreeView.ItemContainerStyle>

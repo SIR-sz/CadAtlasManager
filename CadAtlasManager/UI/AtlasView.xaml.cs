@@ -597,8 +597,17 @@ namespace CadAtlasManager
                 // 只有点在非箭头区域，才触发单选逻辑
                 if (!isArrow)
                 {
-                    // 如果它还没被选中，或者为了清除其他多选项 -> 执行单选
-                    // (注意：这里不要加 !clickedItem.IsItemSelected 判断，否则单机已选项无法清除其他多选项)
+                    // 【核心修改】
+                    // 如果点击的是“项目工作台”中“已经选中”的文件，且没有按Ctrl/Shift
+                    // 为了支持多选拖拽，不要立即清除选中状态，推迟到 MouseUp 处理
+
+                    if (treeView != null && treeView.Name == "ProjectTree" && clickedItem.IsItemSelected)
+                    {
+                        _lastSelectedItem = clickedItem;
+                        return; // 跳过后续的清除逻辑
+                    }
+
+                    // (以下是原有逻辑：点击未选中的项，立即单选)
                     ClearAllSelection(Items);
                     ClearAllSelection(ProjectTreeItems);
                     ClearAllSelection(PlotTreeItems);
@@ -606,6 +615,36 @@ namespace CadAtlasManager
                     clickedItem.IsItemSelected = true;
                     _lastSelectedItem = clickedItem;
                 }
+            }
+        }
+        // 【新增方法】处理鼠标松开事件（实现延迟单选）
+        private void ProjectTree_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            // 如果 _draggedItem 不为空，说明鼠标按下过，但没有触发 DragDrop 
+            // (因为如果触发了拖拽，MouseMove 里会把 _draggedItem 置空)
+            if (_draggedItem != null)
+            {
+                // 检查是否是单纯的点击（无 Ctrl/Shift）
+                if (!Keyboard.IsKeyDown(Key.LeftCtrl) && !Keyboard.IsKeyDown(Key.RightCtrl) &&
+                    !Keyboard.IsKeyDown(Key.LeftShift) && !Keyboard.IsKeyDown(Key.RightShift))
+                {
+                    var clickedItem = GetClickedItem(e);
+
+                    // 如果松开鼠标的位置正是刚才按下的那个已选项
+                    if (clickedItem != null && clickedItem == _draggedItem && clickedItem.IsItemSelected)
+                    {
+                        // 执行迟到的“单选”逻辑：清除其他，只留自己
+                        ClearAllSelection(Items);
+                        ClearAllSelection(ProjectTreeItems);
+                        ClearAllSelection(PlotTreeItems);
+
+                        clickedItem.IsItemSelected = true;
+                        _lastSelectedItem = clickedItem;
+                    }
+                }
+
+                // 重置拖拽状态
+                _draggedItem = null;
             }
         }
 

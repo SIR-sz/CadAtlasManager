@@ -220,30 +220,59 @@ namespace CadAtlasManager
         {
             PlotInfo info = new PlotInfo();
             info.Layout = layout.ObjectId;
+
+            // 1. 初始化
             PlotSettings settings = new PlotSettings(layout.ModelType);
             settings.CopyFrom(layout);
             var psv = PlotSettingsValidator.Current;
 
+            // 2. 设置打印机
             psv.SetPlotConfigurationName(settings, config.PrinterName, null);
 
+            // 3. 计算图框宽高
             double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
             double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
+
+            // 4. 纸张匹配 (调用上面的增强版方法)
             string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
-            if (!string.IsNullOrEmpty(matchedMedia)) psv.SetCanonicalMediaName(settings, matchedMedia);
-            else if (!string.IsNullOrEmpty(config.MediaName)) psv.SetCanonicalMediaName(settings, config.MediaName);
 
-            if (!string.IsNullOrEmpty(config.StyleSheet)) try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
+            if (!string.IsNullOrEmpty(matchedMedia))
+            {
+                // 自动匹配成功
+                psv.SetCanonicalMediaName(settings, matchedMedia);
+            }
+            else
+            {
+                // 匹配失败，尝试使用用户指定的纸张兜底
+                if (!string.IsNullOrEmpty(config.MediaName))
+                {
+                    try { psv.SetCanonicalMediaName(settings, config.MediaName); } catch { }
+                }
+            }
 
+            // 5. 样式表 (CTB)
+            if (!string.IsNullOrEmpty(config.StyleSheet))
+            {
+                try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
+            }
+
+            // 6. 打印区域 (Window)
             psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
             psv.SetPlotWindowArea(settings, new Extents2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y));
 
+            // 7. 旋转
             psv.SetPlotRotation(settings, PlotRotation.Degrees000);
             if (config.AutoRotate)
             {
-                double paperW = settings.PlotPaperSize.X; double paperH = settings.PlotPaperSize.Y;
-                if ((blockH > blockW) != (paperH > paperW)) psv.SetPlotRotation(settings, PlotRotation.Degrees090);
+                double paperW = settings.PlotPaperSize.X;
+                double paperH = settings.PlotPaperSize.Y;
+                if ((blockH > blockW) != (paperH > paperW))
+                {
+                    psv.SetPlotRotation(settings, PlotRotation.Degrees090);
+                }
             }
 
+            // 8. 比例与居中
             if (config.ScaleType == "Fit")
             {
                 psv.SetStdScaleType(settings, StdScaleType.ScaleToFit);
@@ -253,11 +282,22 @@ namespace CadAtlasManager
             {
                 CustomScale scale = ParseCustomScale(config.ScaleType);
                 psv.SetCustomPrintScale(settings, scale);
-                if (config.PlotCentered) psv.SetPlotCentered(settings, true);
-                else { psv.SetPlotCentered(settings, false); psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY)); }
+
+                if (config.PlotCentered)
+                {
+                    psv.SetPlotCentered(settings, true);
+                }
+                else
+                {
+                    psv.SetPlotCentered(settings, false);
+                    psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY));
+                }
             }
+
+            // 9. 最终应用
             psv.RefreshLists(settings);
             info.OverrideSettings = settings;
+
             return info;
         }
         private static CustomScale ParseCustomScale(string input)
@@ -309,15 +349,48 @@ namespace CadAtlasManager
         private static string FindMatchingMedia(PlotSettings s, PlotSettingsValidator psv, double w, double h)
         {
             double tol = 2.0;
+            // 1. 备份当前纸张 (如果它是有效的)
+            string originalMedia = s.CanonicalMediaName;
+
+            // 获取打印机支持的所有纸张列表
             var medias = psv.GetCanonicalMediaNameList(s);
+            if (medias == null || medias.Count == 0) return null;
+
+            // 2. 遍历查找匹配尺寸
             foreach (string mediaName in medias)
             {
-                psv.SetCanonicalMediaName(s, mediaName);
+                psv.SetCanonicalMediaName(s, mediaName); // 临时切换纸张以获取尺寸
                 Point2d paperSize = s.PlotPaperSize;
-                double pw = paperSize.X; double ph = paperSize.Y;
-                if ((Math.Abs(pw - w) < tol && Math.Abs(ph - h) < tol) || (Math.Abs(pw - h) < tol && Math.Abs(ph - w) < tol)) return mediaName;
+                double pw = paperSize.X;
+                double ph = paperSize.Y;
+
+                // 检查尺寸 (横向或纵向)
+                if ((Math.Abs(pw - w) < tol && Math.Abs(ph - h) < tol) ||
+                    (Math.Abs(pw - h) < tol && Math.Abs(ph - w) < tol))
+                {
+                    return mediaName; // 找到了！此时 s 已设置为正确纸张
+                }
             }
-            return null;
+
+            // 3. 【关键防崩逻辑】如果没找到匹配的...
+            // 此时 s 可能停留在列表的最后一张纸（往往是 UserDefined 或 Custom），这会导致 eInvalidInput 报错。
+            // 必须把它“救”回来！
+
+            bool restored = false;
+            // A. 尝试还原回原来的纸张 (如果原来的在列表里)
+            if (!string.IsNullOrEmpty(originalMedia) && medias.Contains(originalMedia))
+            {
+                try { psv.SetCanonicalMediaName(s, originalMedia); restored = true; } catch { }
+            }
+
+            // B. 如果还原失败（比如切了打印机，旧纸张不支持），强制设置为列表的第一张纸 (如 A4)
+            // 这样虽然尺寸不对，但至少是一个“有效”的纸张，能保证 Validator 不报错。
+            if (!restored && medias.Count > 0)
+            {
+                try { psv.SetCanonicalMediaName(s, medias[0]); } catch { }
+            }
+
+            return null; // 返回 null 表示没找到完美匹配的
         }
     }
 }
