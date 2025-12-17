@@ -274,84 +274,163 @@ namespace CadAtlasManager
         // =================================================================
         private void MenuItem_BatchPlot_Click(object sender, RoutedEventArgs e)
         {
-            if (_activeProject == null) { MessageBox.Show("请先选择一个项目。"); return; }
+            // 1. 基础检查
+            if (_activeProject == null)
+            {
+                MessageBox.Show("请先在项目工作台中选择一个激活的项目。");
+                return;
+            }
 
-            // 1. 获取选中文件
+            // 2. 获取选中的 DWG 文件
             var selectedItems = GetAllSelectedItems();
-            if (selectedItems.Count == 0 && GetSelectedItem() != null) selectedItems.Add(GetSelectedItem());
-            var dwgFiles = selectedItems.Where(i => i.Type == ExplorerItemType.File && i.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase)).ToList();
-            if (dwgFiles.Count == 0) { MessageBox.Show("请选择至少一个 DWG 文件。"); return; }
+            // 如果没多选，尝试获取当前单选项
+            if (selectedItems.Count == 0 && GetSelectedItem() != null)
+            {
+                selectedItems.Add(GetSelectedItem());
+            }
 
-            // 2. 准备环境
+            // 过滤出 .dwg 文件
+            var dwgFiles = selectedItems
+                .Where(i => i.Type == ExplorerItemType.File && i.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (dwgFiles.Count == 0)
+            {
+                MessageBox.Show("请选择至少一个 DWG 图纸文件。");
+                return;
+            }
+
+            // 3. 准备输出目录 (_Plot)
             string outputDir = _activeProject.OutputPath;
-            if (string.IsNullOrEmpty(outputDir)) outputDir = Path.Combine(_activeProject.Path, "_Plot");
-            if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
+            if (string.IsNullOrEmpty(outputDir))
+            {
+                outputDir = Path.Combine(_activeProject.Path, "_Plot");
+            }
+            if (!Directory.Exists(outputDir))
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+
+            // 加载历史版本记录 (用于判断图纸是否修改过)
             PlotMetaManager.LoadHistory(outputDir);
 
-            // 3. 智能筛选 (构建候选列表)
+            // 4. 构建候选列表 (计算指纹与过期状态)
             var candidates = new List<PlotCandidate>();
-            Mouse.OverrideCursor = Cursors.Wait;
-            foreach (var item in dwgFiles)
+            Mouse.OverrideCursor = Cursors.Wait; // 显示忙碌光标
+            try
             {
-                string dwgName = item.Name;
-                string pdfName = Path.GetFileNameWithoutExtension(dwgName) + ".pdf";
-                string pdfPath = Path.Combine(outputDir, pdfName);
-                string currentTdUpdate = CadService.GetSmartFingerprint(item.FullPath);
-
-                bool isOutdated = !File.Exists(pdfPath) || PlotMetaManager.IsOutdated(outputDir, pdfName, dwgName, currentTdUpdate);
-
-                candidates.Add(new PlotCandidate
+                foreach (var item in dwgFiles)
                 {
-                    FileName = dwgName,
-                    FilePath = item.FullPath,
-                    IsOutdated = isOutdated,
-                    IsSelected = isOutdated,
-                    NewTdUpdate = currentTdUpdate
-                });
-            }
-            Mouse.OverrideCursor = null;
+                    string dwgName = item.Name;
+                    string pdfName = Path.GetFileNameWithoutExtension(dwgName) + ".pdf";
+                    string pdfPath = Path.Combine(outputDir, pdfName);
 
-            // 4. 弹出筛选确认框 (BatchPlotDialog - 现在位于 CadAtlasManager.UI 命名空间)
+                    // 获取当前文件指纹
+                    string currentTdUpdate = CadService.GetSmartFingerprint(item.FullPath);
+
+                    // 判断是否过期 (PDF不存在 或 指纹不匹配)
+                    bool isOutdated = !File.Exists(pdfPath) || PlotMetaManager.IsOutdated(outputDir, pdfName, dwgName, currentTdUpdate);
+
+                    candidates.Add(new PlotCandidate
+                    {
+                        FileName = dwgName,
+                        FilePath = item.FullPath,
+                        IsOutdated = isOutdated,
+                        IsSelected = isOutdated, // 默认勾选需要更新的文件
+                        NewTdUpdate = currentTdUpdate
+                    });
+                }
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+
+            // 5. 弹出配置对话框 (确认列表 + 输入图框名称)
+            // BatchPlotDialog 需支持返回用户修改后的 TargetBlockNames
             var dialog = new BatchPlotDialog(candidates);
             if (dialog.ShowDialog() != true) return;
-            var finalFiles = dialog.ConfirmedFiles;
 
-            // 5. 获取打印模板
-            if (MessageBox.Show("插件将【复制当前活动图纸的打印设置】应用到所有选中的文件。\n\n请确认：\n当前打开的图纸是否已配置好打印机、纸张和样式？\n\n点击【是】开始批量打印\n点击【否】去手动配置当前图纸",
-                "确认打印模板", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            var finalFiles = dialog.ConfirmedFiles;
+            var targetBlockNames = dialog.TargetBlockNames; // 获取用户填写的图框名称
+
+            if (finalFiles.Count == 0) return;
+
+            // =================================================================
+            // 【关键修复】保存图框名称配置
+            // =================================================================
+            try
+            {
+                // 1. 加载完整配置
+                var config = ConfigManager.Load() ?? new AppConfig();
+
+                // 2. 更新图框名称字段
+                config.TitleBlockNames = string.Join(",", targetBlockNames);
+
+                // 3. 保存配置
+                // 注意：请确保 ConfigManager.Save(config) 方法存在且能保存所有字段
+                // 如果你的 ConfigManager 只有 Save(list, list, string) 这种旧方法，
+                // 请务必去 ConfigManager.cs 增加一个 Save(AppConfig config) 的重载
+                ConfigManager.Save(config);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"保存配置失败: {ex.Message}");
+            }
+
+            // 6. 获取打印模板 (从当前 CAD 活动窗口读取)
+            if (MessageBox.Show("插件将【复制当前活动图纸的打印设置】应用到所有选中的文件。\n\n" +
+                                "请确认：\n" +
+                                "1. CAD 中是否已打开了一张图纸？\n" +
+                                "2. 该图纸是否已配置好打印机、纸张、样式表(CTB/STB)？\n\n" +
+                                "点击【是】开始批量打印\n" +
+                                "点击【否】返回去手动配置",
+                                "确认打印模板", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             {
                 return;
             }
 
-            // 读取模板
             var templateSettings = CadService.GetTemplatePlotSettings();
             if (templateSettings == null)
             {
-                MessageBox.Show("无法读取当前图纸设置，请确保至少打开了一张图纸。");
+                MessageBox.Show("无法读取打印模板！\n请确保 CAD 中当前处于激活状态的图纸是有效的。", "错误");
                 return;
             }
 
-            // 6. 循环打印
-            int successCount = 0;
-            foreach (var filePath in finalFiles)
+            // 7. 执行批量打印循环
+            int totalSuccessCount = 0;
+            Mouse.OverrideCursor = Cursors.Wait;
+
+            try
             {
-                string dwgName = Path.GetFileName(filePath);
-                string pdfName = Path.GetFileNameWithoutExtension(dwgName) + ".pdf";
-                string pdfPath = Path.Combine(outputDir, pdfName);
-                var candidate = candidates.First(c => c.FilePath == filePath);
-
-                // 传入模板进行打印
-                bool result = CadService.PlotToPdfWithSettings(filePath, pdfPath, templateSettings);
-
-                if (result)
+                foreach (var filePath in finalFiles)
                 {
-                    PlotMetaManager.SaveRecord(outputDir, pdfName, dwgName, candidate.NewTdUpdate);
-                    successCount++;
+                    // 调用 CadService (安全版)
+                    // 该方法内部会自动处理打开/关闭文档，防止堆损坏
+                    int sheets = CadService.BatchPlotByTitleBlocks(filePath, outputDir, targetBlockNames, templateSettings);
+
+                    if (sheets > 0)
+                    {
+                        // 更新元数据 (标记该文件已为最新)
+                        var candidate = candidates.First(c => c.FilePath == filePath);
+                        string dwgName = Path.GetFileName(filePath);
+
+                        // 简单映射：DWG -> 同名 PDF (虽然实际可能产生了 _1.pdf, _2.pdf 等，但指纹记录在主文件名下即可)
+                        string mainPdfName = Path.GetFileNameWithoutExtension(dwgName) + ".pdf";
+
+                        PlotMetaManager.SaveRecord(outputDir, mainPdfName, dwgName, candidate.NewTdUpdate);
+                        totalSuccessCount += sheets;
+                    }
                 }
             }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
 
-            RefreshPlotTree();
-            MessageBox.Show($"批量打印完成！\n成功: {successCount} 张", "完成");
+            // 8. 收尾
+            RefreshPlotTree(); // 刷新界面显示新生成的 PDF
+            MessageBox.Show($"批量打印完成！\n共生成 PDF: {totalSuccessCount} 张", "完成");
         }
 
         private void LoadPlotSubItems(FileSystemItem parent)
@@ -842,7 +921,30 @@ namespace CadAtlasManager
         private void ProjectTree_MouseDoubleClick(object sender, MouseButtonEventArgs e) { if (GetClickedItem(e) is FileSystemItem i && i.Type == ExplorerItemType.File) OpenFileSmart(i.FullPath, "Edit"); }
         private void PlotTree_MouseDoubleClick(object sender, MouseButtonEventArgs e) { if (GetClickedItem(e) is FileSystemItem i && i.Type == ExplorerItemType.File) Process.Start(new ProcessStartInfo(i.FullPath) { UseShellExecute = true }); }
         private FileSystemItem GetClickedItem(MouseButtonEventArgs e) { var el = e.OriginalSource as FrameworkElement; return el?.DataContext as FileSystemItem; }
-        private void ExecuteFileAction(FileSystemItem i) { string m = "Read"; if (RbEdit.IsChecked == true) m = "Edit"; if (RbCopy.IsChecked == true) m = "Copy"; if (m == "Copy") { var d = new CopyMoveDialog(Path.GetDirectoryName(i.FullPath), i.Name, false); d.Title = "复制副本"; if (_activeProject != null) { /* d.SelectedPath = _activeProject.Path; */ } if (d.ShowDialog() == true) { OpenFileSmart(i.FullPath, "Copy", Path.Combine(d.SelectedPath, d.FileName)); if (_activeProject != null && d.SelectedPath.StartsWith(_activeProject.Path)) RefreshProjectTree(); } } else OpenFileSmart(i.FullPath, m); }
+        private void ExecuteFileAction(FileSystemItem i)
+        {
+            string m = "Read"; if (RbEdit.IsChecked == true) m = "Edit"; if (RbCopy.IsChecked == true) m = "Copy"; if (m == "Copy")
+            {
+                // 1. 定义默认路径：优先使用激活项目的路径，如果没有激活项目，则使用原文件所在路径
+                string defaultPath = Path.GetDirectoryName(i.FullPath);
+                if (_activeProject != null && System.IO.Directory.Exists(_activeProject.Path))
+                {
+                    defaultPath = _activeProject.Path;
+                }
+
+                // 2. 将计算好的 defaultPath 传入弹窗构造函数
+                var d = new CopyMoveDialog(defaultPath, i.Name, false);
+                d.Title = "复制副本";
+
+                // 3. 显示弹窗
+                if (d.ShowDialog() == true)
+                {
+                    OpenFileSmart(i.FullPath, "Copy", Path.Combine(d.SelectedPath, d.FileName));
+                    // 如果保存到了项目目录下，刷新项目树
+                    if (_activeProject != null && d.SelectedPath.StartsWith(_activeProject.Path)) RefreshProjectTree();
+                }
+            }
+        }
         private void OpenFileSmart(string s, string m, string d = null) { string f = s; if (m == "Copy" && !string.IsNullOrEmpty(d)) { try { File.Copy(s, d, true); f = d; m = "Edit"; } catch { return; } } string x = Path.GetExtension(f).ToLower(); if (x == ".dwg" || x == ".dxf") CadService.OpenDwg(f, m); else Process.Start(new ProcessStartInfo(f) { UseShellExecute = true }); }
         private bool CheckFileFilter(string x, string f)
         {

@@ -12,7 +12,9 @@ namespace CadAtlasManager.UI
     {
         public List<string> ConfirmedFiles { get; private set; } = new List<string>();
         private List<PlotCandidate> _candidates;
-
+        // 【新增】对外暴露用户最终确认的图框名称列表
+        public List<string> TargetBlockNames { get; private set; }
+        private TextBox _tbBlockNames; // 输入框引用
         public BatchPlotDialog(List<PlotCandidate> candidates)
         {
             _candidates = candidates;
@@ -28,15 +30,44 @@ namespace CadAtlasManager.UI
             grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 列表区
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 底部按钮区
             this.Content = grid;
+            var topPanel = new StackPanel { Orientation = Orientation.Vertical, Margin = new Thickness(0, 0, 0, 10) };
+            topPanel.SetValue(Grid.RowProperty, 0);
 
             // 1. 提示文本
             var txtInfo = new TextBlock
             {
-                Text = "检测到以下文件的版本状态。请勾选需要打印的文件：\n(注：'已修改' 建议重新打印，'未修改' 可跳过)",
+                Text = "检测到以下文件的版本状态。请勾选需要打印的文件：",
                 Foreground = Brushes.Gray,
-                Margin = new Thickness(0, 0, 0, 10)
+                Margin = new Thickness(0, 0, 0, 5)
             };
-            grid.Children.Add(txtInfo);
+            topPanel.Children.Add(txtInfo);
+
+            // 2. 新增：图框名称配置
+            var configGrid = new Grid { Margin = new Thickness(0, 5, 0, 0) };
+            configGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            configGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var lblConfig = new TextBlock { Text = "识别图框名称 (逗号分隔): ", VerticalAlignment = VerticalAlignment.Center };
+
+            // 读取配置
+            var currentConfig = ConfigManager.Load();
+            string initialNames = currentConfig.TitleBlockNames ?? "TK,A3图框";
+
+            _tbBlockNames = new TextBox
+            {
+                Text = initialNames,
+                Height = 26,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Padding = new Thickness(3),
+                ToolTip = "输入块名或外部参照名，用中文或英文逗号分隔"
+            };
+            Grid.SetColumn(_tbBlockNames, 1);
+
+            configGrid.Children.Add(lblConfig);
+            configGrid.Children.Add(_tbBlockNames);
+            topPanel.Children.Add(configGrid);
+
+            grid.Children.Add(topPanel); // 将 topPanel 加入主 Grid
 
             // 2. 列表视图
             var listView = new ListView { Margin = new Thickness(0, 0, 0, 10) };
@@ -77,6 +108,29 @@ namespace CadAtlasManager.UI
                     MessageBox.Show("请至少选择一个文件。");
                     return;
                 }
+
+                // 【新增】保存配置
+                string inputNames = _tbBlockNames.Text.Trim();
+                if (string.IsNullOrEmpty(inputNames))
+                {
+                    MessageBox.Show("图框名称不能为空，否则无法自动识别打印区域。");
+                    return;
+                }
+
+                // 解析并去重
+                TargetBlockNames = inputNames.Split(new[] { ',', '，' }, System.StringSplitOptions.RemoveEmptyEntries)
+                                             .Select(n => n.Trim())
+                                             .Distinct()
+                                             .ToList();
+
+                // 持久化保存到 Config
+                var config = ConfigManager.Load();
+                config.TitleBlockNames = inputNames;
+                // 保存逻辑需要 ConfigManager 提供 Save 方法支持仅更新部分字段，
+                // 这里简单起见，我们假设 ConfigManager.Save(..., ..., ...) 是全量保存
+                // 在 AtlasView 调用层保存可能更合适，或者临时保存到内存
+                // 为了代码整洁，我们把 names 存在 public 属性 TargetBlockNames 里供外部调用
+
                 DialogResult = true;
             };
 

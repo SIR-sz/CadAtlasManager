@@ -1,4 +1,4 @@
-﻿using CadAtlasManager.Models;
+﻿using CadAtlasManager.Models; // 确保引用了模型命名空间
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -6,69 +6,86 @@ using System.Xml.Serialization;
 
 namespace CadAtlasManager
 {
-    // 配置数据结构
     public class AppConfig
     {
         public List<string> AtlasFolders { get; set; } = new List<string>();
         public List<ProjectItem> Projects { get; set; } = new List<ProjectItem>();
-        public string LastActiveProjectPath { get; set; } = ""; // 记住上次选中的项目
+        public string LastActiveProjectPath { get; set; } = "";
+
+        // 【新增】图框名称配置，默认包含 TK 和 A3图框
+        public string TitleBlockNames { get; set; } = "TK,A3图框";
     }
 
     public static class ConfigManager
     {
-        // 配置文件保存路径：C:\Users\用户名\AppData\Roaming\CadAtlasManager\config.xml
-        private static string ConfigPath
-        {
-            get
-            {
-                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                string folder = Path.Combine(appData, "CadAtlasManager");
-                if (!Directory.Exists(folder)) Directory.CreateDirectory(folder);
-                return Path.Combine(folder, "config.xml");
-            }
-        }
+        // 配置文件路径：AppData/Roaming/CadAtlasManager/config.xml
+        private static readonly string ConfigPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "CadAtlasManager",
+            "config.xml");
 
-        // 保存配置
-        public static void Save(List<string> folders, IEnumerable<ProjectItem> projects, string activeProjectPath)
-        {
-            try
-            {
-                var config = new AppConfig
-                {
-                    AtlasFolders = folders,
-                    Projects = new List<ProjectItem>(projects),
-                    LastActiveProjectPath = activeProjectPath
-                };
-
-                XmlSerializer serializer = new XmlSerializer(typeof(AppConfig));
-                using (StreamWriter writer = new StreamWriter(ConfigPath))
-                {
-                    serializer.Serialize(writer, config);
-                }
-            }
-            catch (Exception ex)
-            {
-                // 保存失败通常不弹窗打扰用户，除非调试
-                System.Diagnostics.Debug.WriteLine("保存配置失败: " + ex.Message);
-            }
-        }
-
-        // 读取配置
         public static AppConfig Load()
         {
-            if (!File.Exists(ConfigPath)) return new AppConfig();
-
             try
             {
-                XmlSerializer serializer = new XmlSerializer(typeof(AppConfig));
-                using (StreamReader reader = new StreamReader(ConfigPath))
+                if (!File.Exists(ConfigPath)) return new AppConfig();
+
+                XmlSerializer xs = new XmlSerializer(typeof(AppConfig));
+                using (StreamReader sr = new StreamReader(ConfigPath))
                 {
-                    return (AppConfig)serializer.Deserialize(reader);
+                    return (AppConfig)xs.Deserialize(sr);
                 }
             }
             catch
             {
-                return new AppConfig(); // 读取失败则返回默认空配置
+                // 加载失败则返回默认配置
+                return new AppConfig();
+            }
+        }
+
+        // =================================================================
+        // 【新增方法】直接保存配置对象 (用于 BatchPlotDialog 调用)
+        // =================================================================
+        public static void Save(AppConfig config)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(ConfigPath);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+                XmlSerializer xs = new XmlSerializer(typeof(AppConfig));
+                using (StreamWriter sw = new StreamWriter(ConfigPath))
+                {
+                    xs.Serialize(sw, config);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("保存配置失败: " + ex.Message);
+            }
+        }
+
+        // =================================================================
+        // 【兼容旧代码】只更新列表，不覆盖其他字段 (如 TitleBlockNames)
+        // =================================================================
+        public static void Save(List<string> folders, IEnumerable<ProjectItem> projects, string activePath)
+        {
+            try
+            {
+                // 1. 先加载现有配置（关键！这样才能保留 TitleBlockNames 等未传入的字段）
+                var config = Load();
+
+                // 2. 更新传入的字段
+                config.AtlasFolders = folders ?? new List<string>();
+                config.Projects = new List<ProjectItem>(projects);
+                config.LastActiveProjectPath = activePath ?? "";
+
+                // 3. 保存完整对象
+                Save(config);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine("保存列表配置失败: " + ex.Message);
             }
         }
     }
