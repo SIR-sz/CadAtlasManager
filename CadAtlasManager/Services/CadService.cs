@@ -16,33 +16,52 @@ namespace CadAtlasManager
         public void Initialize() { }
         public void Terminate() { }
 
-        // --- 基础 API ---
-        public static string GetSmartFingerprint(string dwgPath)
+        // 核心：获取 CAD 内部的最后保存时间 (Tduupdate) 作为指纹
+        public static string GetContentFingerprint(string dwgPath)
         {
-            // 简单的指纹实现，使用最后修改时间 ticks
+            // A. 如果文件已打开，从内存读
+            foreach (Document doc in Application.DocumentManager)
+            {
+                if (doc.Name.Equals(dwgPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 使用 Tduupdate (Universal Time)，解决属性名报错问题
+                    return doc.Database.Tduupdate.ToString();
+                }
+            }
+
+            // B. 如果文件未打开，使用侧数据库静默读取 (ReadDwgFile)
+            if (File.Exists(dwgPath))
+            {
+                try
+                {
+                    using (Database db = new Database(false, true))
+                    {
+                        db.ReadDwgFile(dwgPath, FileShare.Read, true, "");
+                        return db.Tduupdate.ToString();
+                    }
+                }
+                catch
+                {
+                    // 降级方案：文件系统时间
+                    return File.GetLastWriteTimeUtc(dwgPath).Ticks.ToString();
+                }
+            }
+            return "FILE_NOT_FOUND";
+        }
+
+        public static string GetFileTimestamp(string dwgPath)
+        {
             if (!File.Exists(dwgPath)) return "0";
             return File.GetLastWriteTimeUtc(dwgPath).Ticks.ToString();
         }
 
-        // 【修复】实现插入图块逻辑
         public static void InsertDwgAsBlock(string f)
         {
             if (!File.Exists(f)) return;
-
             Document doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-
-            // 1. 将焦点设置回 CAD 文档窗口，否则命令可能发不出去
             doc.Window.Focus();
-
-            // 2. 构造命令：-INSERT "路径" 
-            // 注意：
-            // (1) 文件名必须加引号，防止路径中有空格导致命令中断。
-            // (2) 字符串末尾加一个空格，代表命令确认。
-            // (3) 此时 CAD 会进入 "指定插入点" 的状态，用户可以直接在屏幕上点击。
             string cmd = $"-INSERT \"{f}\" ";
-
-            // 3. 发送命令
             doc.SendStringToExecute(cmd, true, false, false);
         }
 
@@ -67,7 +86,7 @@ namespace CadAtlasManager
             catch (System.Exception ex) { System.Windows.MessageBox.Show($"CAD 无法打开文件:\n{ex.Message}"); }
         }
 
-        // --- 打印配置辅助 ---
+        // --- 打印辅助方法 ---
         public static List<string> GetPlotters()
         {
             try { return PlotSettingsValidator.Current.GetPlotDeviceList().Cast<string>().ToList(); }
@@ -91,16 +110,17 @@ namespace CadAtlasManager
             catch { return new List<string>(); }
         }
 
-        // --- 批量打印核心 ---
         public struct TitleBlockInfo
         {
             public string BlockName;
             public Extents3d Extents;
         }
 
-        public static int BatchPlotByTitleBlocks(string dwgPath, string outputDir, BatchPlotConfig config)
+        // --- 批量打印核心 ---
+        // 修改：返回 List<string> 包含所有生成的 PDF 文件名
+        public static List<string> BatchPlotByTitleBlocks(string dwgPath, string outputDir, BatchPlotConfig config)
         {
-            int successCount = 0;
+            List<string> generatedFiles = new List<string>();
             Document doc = null;
             bool isOpenedByUs = false;
 
@@ -115,9 +135,9 @@ namespace CadAtlasManager
                     if (File.Exists(dwgPath))
                     {
                         try { doc = Application.DocumentManager.Open(dwgPath, false); isOpenedByUs = true; }
-                        catch { return 0; }
+                        catch { return generatedFiles; }
                     }
-                    else return 0;
+                    else return generatedFiles;
                 }
 
                 using (doc.LockDocument())
@@ -134,7 +154,7 @@ namespace CadAtlasManager
                         var targetLayout = GetLayoutFromBtrId(tr, db, targetSpaceId);
 
                         var titleBlocks = ScanTitleBlocks(tr, targetSpaceId, blockNames);
-                        if (titleBlocks.Count == 0) return 0;
+                        if (titleBlocks.Count == 0) return generatedFiles;
 
                         titleBlocks = SortTitleBlocks(titleBlocks, config.OrderType);
 
@@ -162,7 +182,8 @@ namespace CadAtlasManager
                                     engine.EndPage(null);
                                     engine.EndDocument(null);
                                     engine.EndPlot(null);
-                                    successCount++;
+
+                                    generatedFiles.Add(fileName + ".pdf"); // 记录生成的文件
                                 }
                             }
                         }
@@ -177,31 +198,24 @@ namespace CadAtlasManager
             {
                 if (isOpenedByUs && doc != null) doc.CloseAndDiscard();
             }
-            return successCount;
+            return generatedFiles;
         }
 
+        // ... (SortTitleBlocks, BuildPlotInfo, ParseCustomScale, ScanTitleBlocks 等辅助方法与之前保持一致) ...
         private static List<TitleBlockInfo> SortTitleBlocks(List<TitleBlockInfo> list, PlotOrderType orderType)
         {
             double tolerance = 100.0;
             if (orderType == PlotOrderType.Horizontal)
             {
-                return list
-                    .Select(t => new { Info = t, RoundedY = Math.Round(t.Extents.MinPoint.Y / tolerance) })
-                    .OrderByDescending(x => x.RoundedY)
-                    .ThenBy(x => x.Info.Extents.MinPoint.X)
-                    .Select(x => x.Info).ToList();
+                return list.Select(t => new { Info = t, RoundedY = Math.Round(t.Extents.MinPoint.Y / tolerance) })
+                    .OrderByDescending(x => x.RoundedY).ThenBy(x => x.Info.Extents.MinPoint.X).Select(x => x.Info).ToList();
             }
             else
             {
-                return list
-                    .Select(t => new { Info = t, RoundedX = Math.Round(t.Extents.MinPoint.X / tolerance) })
-                    .OrderBy(x => x.RoundedX)
-                    .ThenByDescending(x => x.Info.Extents.MinPoint.Y)
-                    .Select(x => x.Info).ToList();
+                return list.Select(t => new { Info = t, RoundedX = Math.Round(t.Extents.MinPoint.X / tolerance) })
+                    .OrderBy(x => x.RoundedX).ThenByDescending(x => x.Info.Extents.MinPoint.Y).Select(x => x.Info).ToList();
             }
         }
-
-        // --- 构建打印配置 (支持任意比例解析) ---
         private static PlotInfo BuildPlotInfo(Transaction tr, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, Database targetDb)
         {
             PlotInfo info = new PlotInfo();
@@ -210,37 +224,26 @@ namespace CadAtlasManager
             settings.CopyFrom(layout);
             var psv = PlotSettingsValidator.Current;
 
-            // 1. 打印机
             psv.SetPlotConfigurationName(settings, config.PrinterName, null);
 
-            // 2. 纸张 (自动匹配逻辑)
             double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
             double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
             string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
-
             if (!string.IsNullOrEmpty(matchedMedia)) psv.SetCanonicalMediaName(settings, matchedMedia);
             else if (!string.IsNullOrEmpty(config.MediaName)) psv.SetCanonicalMediaName(settings, config.MediaName);
 
-            // 3. 样式表
-            if (!string.IsNullOrEmpty(config.StyleSheet))
-                try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
+            if (!string.IsNullOrEmpty(config.StyleSheet)) try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
 
-            // 4. 打印区域
             psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
             psv.SetPlotWindowArea(settings, new Extents2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y));
 
-            // 5. 自动旋转
             psv.SetPlotRotation(settings, PlotRotation.Degrees000);
             if (config.AutoRotate)
             {
-                double paperW = settings.PlotPaperSize.X;
-                double paperH = settings.PlotPaperSize.Y;
-                bool isBlockPortrait = blockH > blockW;
-                bool isPaperPortrait = paperH > paperW;
-                if (isBlockPortrait != isPaperPortrait) psv.SetPlotRotation(settings, PlotRotation.Degrees090);
+                double paperW = settings.PlotPaperSize.X; double paperH = settings.PlotPaperSize.Y;
+                if ((blockH > blockW) != (paperH > paperW)) psv.SetPlotRotation(settings, PlotRotation.Degrees090);
             }
 
-            // 6. 比例与偏移
             if (config.ScaleType == "Fit")
             {
                 psv.SetStdScaleType(settings, StdScaleType.ScaleToFit);
@@ -248,56 +251,27 @@ namespace CadAtlasManager
             }
             else
             {
-                // 解析自定义比例字符串 (例如 "1:100", "1:50", "0.5")
                 CustomScale scale = ParseCustomScale(config.ScaleType);
                 psv.SetCustomPrintScale(settings, scale);
-
-                // 居中或偏移
-                if (config.PlotCentered)
-                {
-                    psv.SetPlotCentered(settings, true);
-                }
-                else
-                {
-                    psv.SetPlotCentered(settings, false);
-                    psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY));
-                }
+                if (config.PlotCentered) psv.SetPlotCentered(settings, true);
+                else { psv.SetPlotCentered(settings, false); psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY)); }
             }
-
             psv.RefreshLists(settings);
             info.OverrideSettings = settings;
             return info;
         }
-
-        // --- 辅助方法: 解析比例字符串 ---
         private static CustomScale ParseCustomScale(string input)
         {
             if (string.IsNullOrWhiteSpace(input)) return new CustomScale(1, 1);
-
             try
             {
-                // 处理 "1:100" 或 "1/100" 格式
                 var parts = input.Split(new[] { ':', '/' }, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 2)
-                {
-                    double num = double.Parse(parts[0]);
-                    double den = double.Parse(parts[1]);
-                    return new CustomScale(num, den);
-                }
-                // 处理小数 "0.5" 或 "2"
-                else if (parts.Length == 1)
-                {
-                    double val = double.Parse(parts[0]);
-                    // 如果是 0.01 (即 1:100) -> 1, 100
-                    if (val < 1.0 && val > 0) return new CustomScale(1, 1.0 / val);
-                    return new CustomScale(val, 1);
-                }
+                if (parts.Length == 2) return new CustomScale(double.Parse(parts[0]), double.Parse(parts[1]));
+                else if (parts.Length == 1) { double val = double.Parse(parts[0]); return val < 1.0 && val > 0 ? new CustomScale(1, 1.0 / val) : new CustomScale(val, 1); }
             }
             catch { }
-
-            return new CustomScale(1, 1); // 解析失败默认 1:1
+            return new CustomScale(1, 1);
         }
-
         private static List<TitleBlockInfo> ScanTitleBlocks(Transaction tr, ObjectId spaceId, List<string> targetNames)
         {
             var result = new List<TitleBlockInfo>();
@@ -310,9 +284,7 @@ namespace CadAtlasManager
                 if (br == null) continue;
                 string effName = GetEffectiveName(br);
                 if (targetNames.Any(n => n.Equals(effName, StringComparison.OrdinalIgnoreCase)))
-                {
                     try { result.Add(new TitleBlockInfo { BlockName = effName, Extents = br.GeometricExtents }); } catch { }
-                }
             }
             return result;
         }
@@ -343,8 +315,7 @@ namespace CadAtlasManager
                 psv.SetCanonicalMediaName(s, mediaName);
                 Point2d paperSize = s.PlotPaperSize;
                 double pw = paperSize.X; double ph = paperSize.Y;
-                if ((Math.Abs(pw - w) < tol && Math.Abs(ph - h) < tol) || (Math.Abs(pw - h) < tol && Math.Abs(ph - w) < tol))
-                    return mediaName;
+                if ((Math.Abs(pw - w) < tol && Math.Abs(ph - h) < tol) || (Math.Abs(pw - h) < tol && Math.Abs(ph - w) < tol)) return mediaName;
             }
             return null;
         }

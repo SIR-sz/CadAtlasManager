@@ -6,13 +6,12 @@ using System.Text;
 
 namespace CadAtlasManager
 {
-    // 专门管理图纸打印历史记录
     public static class PlotMetaManager
     {
         private const string HIDDEN_DIR = ".cadatlas";
         private const string HISTORY_FILE = "plot_history.json";
 
-        // 记录结构：PDF文件名 -> 指纹字符串 (格式: DwgName|TdUpdateValue)
+        // 格式: PDF名 -> "DwgName | Tduupdate | FileTimestamp"
         private static Dictionary<string, string> _historyCache = new Dictionary<string, string>();
 
         public static void LoadHistory(string plotFolder)
@@ -34,29 +33,66 @@ namespace CadAtlasManager
             }
         }
 
-        public static void SaveRecord(string plotFolder, string pdfName, string dwgName, string tdUpdate)
+        public static void SaveRecord(string plotFolder, string pdfName, string dwgName, string fingerprint, string timestamp)
         {
-            // 确保加载了当前目录的历史
             if (!_historyCache.ContainsKey(pdfName) && _historyCache.Count == 0) LoadHistory(plotFolder);
 
-            // 指纹格式：源文件名|指纹值
-            string fingerprint = $"{dwgName}|{tdUpdate}";
-            _historyCache[pdfName] = fingerprint;
+            string data = $"{dwgName}|{fingerprint}|{timestamp}";
+            _historyCache[pdfName] = data;
 
             WriteToDisk(plotFolder);
         }
 
-        public static bool IsOutdated(string plotFolder, string pdfName, string currentDwgName, string currentTdUpdate)
+        public static string GetSourceDwgName(string plotFolder, string pdfName)
         {
-            // 如果缓存为空，尝试加载
             if (_historyCache.Count == 0) LoadHistory(plotFolder);
 
-            if (!_historyCache.ContainsKey(pdfName)) return true; // 没有记录，视为过期(或新文件)
+            if (_historyCache.ContainsKey(pdfName))
+            {
+                var parts = _historyCache[pdfName].Split('|');
+                if (parts.Length >= 1) return parts[0];
+            }
+            return null;
+        }
 
-            string savedFingerprint = _historyCache[pdfName];
-            string currentFingerprint = $"{currentDwgName}|{currentTdUpdate}";
+        public static bool CheckStatus(string plotFolder, string pdfName, string currentDwgName, string currentTimestamp, Func<string> funcToGetFingerprint)
+        {
+            if (_historyCache.Count == 0) LoadHistory(plotFolder);
 
-            return savedFingerprint != currentFingerprint;
+            if (!_historyCache.ContainsKey(pdfName)) return false;
+
+            string savedData = _historyCache[pdfName];
+            var parts = savedData.Split('|');
+
+            if (parts.Length < 3) return false;
+
+            string savedName = parts[0];
+            string savedFingerprint = parts[1]; // 这是打印时的 Tduupdate
+            string savedTime = parts[2];
+
+            // 1. 文件名简单核对 (忽略大小写)
+            if (!savedName.Equals(currentDwgName, StringComparison.OrdinalIgnoreCase)) return false;
+
+            // 2. 如果文件系统时间戳没变，直接认为是最新的 (最快，毫秒级)
+            if (savedTime == currentTimestamp) return true;
+
+            // 3. 如果时间戳变了 (可能是复制文件，也可能是编辑了)
+            // 读取当前的 Tduupdate (需要读文件头，稍慢)
+            string currentFingerprint = funcToGetFingerprint();
+
+            if (currentFingerprint == "FILE_NOT_FOUND") return false;
+
+            // 4. 对比 Tduupdate
+            if (currentFingerprint == savedFingerprint)
+            {
+                // Tduupdate 没变，说明只是文件被复制/移动/误触保存，但 CAD 内容没变
+                // 视为最新，并自动修复记录中的时间戳，下次校验就快了
+                SaveRecord(plotFolder, pdfName, currentDwgName, savedFingerprint, currentTimestamp);
+                return true;
+            }
+
+            // Tduupdate 变了 -> 说明 CAD 里保存过 -> 真的过期了
+            return false;
         }
 
         private static void WriteToDisk(string plotFolder)

@@ -1,4 +1,5 @@
 ﻿// 【关键修改：引用新拆分的命名空间】
+using Autodesk.AutoCAD.ApplicationServices;
 using CadAtlasManager.Models;
 using CadAtlasManager.UI;
 using System;
@@ -270,7 +271,7 @@ namespace CadAtlasManager
         }
 
         // =================================================================
-        // 【重构】批量打印流程 (智能筛选 + 统一参数)
+        // 【重构】批量打印流程 (智能筛选 + 统一参数 + 防崩溃修复)
         // =================================================================
 
         private void MenuItem_BatchPlot_Click(object sender, RoutedEventArgs e)
@@ -300,6 +301,25 @@ namespace CadAtlasManager
                 return;
             }
 
+            // =================================================================
+            // 【核心修复】防止“零文档状态”导致崩溃
+            // 如果当前 CAD 没有打开任何图纸，打印引擎会初始化失败导致闪退。
+            // 这里自动新建一个空白文档作为“垫底”，确保环境安全。
+            // =================================================================
+            if (Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.Count == 0)
+            {
+                try
+                {
+                    // Add(null) 会使用默认模板新建一个 Drawing1.dwg
+                    Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.Add(null);
+                }
+                catch
+                {
+                    // 忽略新建失败的情况，继续尝试打印，避免阻断流程
+                }
+            }
+            // =================================================================
+
             // 3. 准备输出目录 (_Plot)
             string outputDir = Path.Combine(_activeProject.Path, "_Plot");
             if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
@@ -317,20 +337,21 @@ namespace CadAtlasManager
                     string dwgName = item.Name;
                     string pdfName = Path.GetFileNameWithoutExtension(dwgName) + ".pdf";
 
-                    // 获取当前文件指纹
-                    string currentTdUpdate = CadService.GetSmartFingerprint(item.FullPath);
+                    // 1. 获取当前时间戳 (快速)
+                    string currentTimestamp = CadService.GetFileTimestamp(item.FullPath);
 
-                    // 判断是否过期
-                    bool isOutdated = PlotMetaManager.IsOutdated(outputDir, pdfName, dwgName, currentTdUpdate);
+                    // 2. 智能校验 (传入委托，按需读取 Tduupdate)
+                    bool isLatest = PlotMetaManager.CheckStatus(outputDir, pdfName, dwgName, currentTimestamp,
+                        () => CadService.GetContentFingerprint(item.FullPath)); // 委托
 
                     candidates.Add(new PlotCandidate
                     {
                         FileName = dwgName,
                         FilePath = item.FullPath,
-                        IsOutdated = isOutdated,
-                        IsSelected = isOutdated, // 默认勾选过期的文件
-                        NewTdUpdate = currentTdUpdate,
-                        VersionStatus = isOutdated ? "⚠️ 需更新" : "✅ 最新"
+                        IsOutdated = !isLatest,       // 注意取反
+                        IsSelected = !isLatest,       // 默认勾选过期的
+                        NewTdUpdate = currentTimestamp, // 这里暂存时间戳
+                        VersionStatus = !isLatest ? "⚠️ 需更新" : "✅ 最新"
                     });
                 }
             }
@@ -347,7 +368,7 @@ namespace CadAtlasManager
             if (dialog.ShowDialog() != true) return;
 
             // 6. 获取用户设置的参数
-            var config = dialog.FinalConfig;       // 打印机、纸张、样式等配置
+            var config = dialog.FinalConfig;        // 打印机、纸张、样式等配置
             var filesToPrint = dialog.ConfirmedFiles; // 用户最终勾选的文件
 
             if (filesToPrint.Count == 0) return;
@@ -360,18 +381,24 @@ namespace CadAtlasManager
             {
                 foreach (var filePath in filesToPrint)
                 {
-                    // 调用 CadService.BatchPlotByTitleBlocks
-                    // 这个方法现在接收 config 对象，并在内部自动处理文档打开/关闭
-                    int sheets = CadService.BatchPlotByTitleBlocks(filePath, outputDir, config);
+                    // 【修改】获取生成的 PDF 列表 (List<string>)
+                    List<string> generatedPdfs = CadService.BatchPlotByTitleBlocks(filePath, outputDir, config);
 
-                    if (sheets > 0)
+                    if (generatedPdfs.Count > 0)
                     {
-                        // 打印成功，更新元数据记录
-                        var c = candidates.First(x => x.FilePath == filePath);
-                        string pdfBaseName = Path.GetFileNameWithoutExtension(c.FileName) + ".pdf";
+                        // 打印成功，立即获取该 DWG 的最新指纹 (Tduupdate) 和 时间戳
+                        string freshFingerprint = CadService.GetContentFingerprint(filePath);
+                        string freshTime = CadService.GetFileTimestamp(filePath);
+                        string dwgName = Path.GetFileName(filePath); // 记录文件名即可，因为校验时有递归搜索
 
-                        PlotMetaManager.SaveRecord(outputDir, pdfBaseName, c.FileName, c.NewTdUpdate);
-                        totalSuccess += sheets;
+                        // 【关键】为每一个生成的 PDF 都保存一条记录
+                        // 这样 Drawing1_1.pdf 也能关联到 Drawing1.dwg
+                        foreach (var pdfName in generatedPdfs)
+                        {
+                            PlotMetaManager.SaveRecord(outputDir, pdfName, dwgName, freshFingerprint, freshTime);
+                        }
+
+                        totalSuccess += generatedPdfs.Count;
                     }
                 }
             }
@@ -830,15 +857,47 @@ namespace CadAtlasManager
             }
         }
 
-        // 单个文件校验逻辑
+        /// =========================================================
+        // 【核心修改】文件校验逻辑
+        // =========================================================
         private void ValidatePdfVersion(FileSystemItem pdfItem)
         {
             string pdfName = pdfItem.Name;
-            // 假设命名规则是：[DwgName].pdf
-            string dwgName = Path.GetFileNameWithoutExtension(pdfName) + ".dwg";
-            string sourceDwgPath = Path.Combine(_activeProject.Path, dwgName);
 
-            // 如果源 DWG 不存在，可能是删了或者改名了
+            // 1. 优先从历史记录反查 DWG 文件名 (包含相对路径信息)
+            string realDwgName = PlotMetaManager.GetSourceDwgName(_activeProject.OutputPath, pdfName);
+
+            // 2. 如果历史记录查不到，尝试智能猜测 (去掉 _1, _2 后缀)
+            if (string.IsNullOrEmpty(realDwgName))
+            {
+                string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(pdfName), @"_\d+$", "");
+                realDwgName = baseName + ".dwg";
+            }
+
+            // 3. 构建源文件路径 (先尝试直接在项目根目录找)
+            string sourceDwgPath = Path.Combine(_activeProject.Path, realDwgName);
+
+            // 【关键修复】如果根目录找不到，进行全目录递归搜索 (解决子文件夹文件丢失问题)
+            if (!File.Exists(sourceDwgPath))
+            {
+                // 仅搜索文件名
+                string onlyFileName = Path.GetFileName(realDwgName);
+                try
+                {
+                    // 在项目目录下递归搜索同名文件
+                    var foundFiles = Directory.GetFiles(_activeProject.Path, onlyFileName, SearchOption.AllDirectories);
+                    if (foundFiles.Length > 0)
+                    {
+                        // 找到第一个匹配的
+                        sourceDwgPath = foundFiles[0];
+                        // 更新一下 realDwgName 为文件名，以便后续逻辑统一
+                        realDwgName = Path.GetFileName(sourceDwgPath);
+                    }
+                }
+                catch { } // 忽略权限错误等
+            }
+
+            // 4. 最终检查文件是否存在
             if (!File.Exists(sourceDwgPath))
             {
                 pdfItem.VersionStatus = "❓ 源文件丢失";
@@ -846,13 +905,15 @@ namespace CadAtlasManager
                 return;
             }
 
-            // 获取源文件当前指纹
-            string currentTdUpdate = CadService.GetSmartFingerprint(sourceDwgPath);
+            // 5. 校验状态 (传入 Tduupdate 获取委托)
+            // 获取当前源文件的时间戳 (文件系统)
+            string currentTimestamp = CadService.GetFileTimestamp(sourceDwgPath);
 
-            // 检查是否过期
-            bool isOutdated = PlotMetaManager.IsOutdated(_activeProject.OutputPath, pdfName, dwgName, currentTdUpdate);
+            // 调用 Manager 进行比对
+            bool isLatest = PlotMetaManager.CheckStatus(_activeProject.OutputPath, pdfName, realDwgName, currentTimestamp,
+                () => CadService.GetContentFingerprint(sourceDwgPath)); // 这里会读取 Tduupdate
 
-            if (isOutdated)
+            if (!isLatest)
             {
                 pdfItem.VersionStatus = "⚠️ 已过期";
                 pdfItem.StatusColor = Brushes.Red;
@@ -864,24 +925,68 @@ namespace CadAtlasManager
             }
         }
 
-        // 2. 右键菜单：打开源 DWG 文件
+        // =================================================================
+        // 【核心修复】右键菜单 - 打开源 DWG (同步最新的查找逻辑)
+        // =================================================================
         private void MenuItem_OpenSourceDwg_Click(object sender, RoutedEventArgs e)
         {
-            var item = GetSelectedItem();
-            if (item != null && item.Type == ExplorerItemType.File && _activeProject != null)
+            // 1. 获取选中的 PDF 文件
+            var item = PlotTree.SelectedItem as FileSystemItem;
+            if (item == null || item.Type != ExplorerItemType.File || !item.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             {
-                // 反推源文件路径
-                string dwgName = Path.GetFileNameWithoutExtension(item.Name) + ".dwg";
-                string sourceDwgPath = Path.Combine(_activeProject.Path, dwgName);
+                MessageBox.Show("请先选择一个 PDF 文件。");
+                return;
+            }
 
-                if (File.Exists(sourceDwgPath))
+            if (_activeProject == null) return;
+
+            string pdfName = item.Name;
+            string outputDir = _activeProject.OutputPath; // PDF 所在的 _Plot 目录
+
+            // ---------------------------------------------------------
+            // 查找逻辑 (与校验版本逻辑保持一致)
+            // ---------------------------------------------------------
+
+            // A. 优先从历史记录反查真实 DWG 文件名
+            string realDwgName = PlotMetaManager.GetSourceDwgName(outputDir, pdfName);
+
+            // B. 如果记录不存在，尝试智能猜测 (去除 _1, _2 等后缀)
+            if (string.IsNullOrEmpty(realDwgName))
+            {
+                // 正则去除结尾的 _数字： Drawing1_1.pdf -> Drawing1.dwg
+                string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(pdfName), @"_\d+$", "");
+                realDwgName = baseName + ".dwg";
+            }
+
+            // C. 构建路径 & 递归搜索 (解决子文件夹问题)
+            string sourceDwgPath = Path.Combine(_activeProject.Path, realDwgName);
+
+            if (!File.Exists(sourceDwgPath))
+            {
+                try
                 {
-                    CadService.OpenDwg(sourceDwgPath, "Edit");
+                    // 在项目根目录下递归搜索同名文件
+                    string onlyFileName = Path.GetFileName(realDwgName);
+                    var foundFiles = Directory.GetFiles(_activeProject.Path, onlyFileName, SearchOption.AllDirectories);
+                    if (foundFiles.Length > 0)
+                    {
+                        sourceDwgPath = foundFiles[0]; // 找到了！
+                    }
                 }
-                else
-                {
-                    MessageBox.Show($"找不到对应的源文件：\n{sourceDwgPath}\n\n可能源文件已重命名或删除。", "错误");
-                }
+                catch { }
+            }
+
+            // ---------------------------------------------------------
+            // 执行打开
+            // ---------------------------------------------------------
+            if (File.Exists(sourceDwgPath))
+            {
+                // "Edit" 表示以可读写方式打开，方便你修改源文件
+                CadService.OpenDwg(sourceDwgPath, "Edit");
+            }
+            else
+            {
+                MessageBox.Show($"未找到源文件：\n{realDwgName}\n\n可能原因：\n1. 源文件已被移动或重命名\n2. 尚未对此文件进行过批量打印(无关联记录)", "无法打开");
             }
         }
         private void BtnVersion_Click(object sender, RoutedEventArgs e) => MessageBox.Show(_versionInfo);
