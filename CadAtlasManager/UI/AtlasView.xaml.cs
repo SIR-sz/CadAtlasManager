@@ -375,7 +375,7 @@ namespace CadAtlasManager
                     }
                 }
             }
-            catch (Exception ex)
+            catch (System.Exception ex)
             {
                 MessageBox.Show($"批处理过程中发生意外错误:\n{ex.Message}");
             }
@@ -466,7 +466,7 @@ namespace CadAtlasManager
 
                     ReloadAtlasTree(); RefreshProjectTree(); RefreshPlotTree();
                 }
-                catch (Exception ex) { MessageBox.Show("重命名失败: " + ex.Message); }
+                catch (System.Exception ex) { MessageBox.Show("重命名失败: " + ex.Message); }
             }
         }
 
@@ -490,7 +490,7 @@ namespace CadAtlasManager
                     }
                     RefreshProjectTree(); RefreshPlotTree();
                 }
-                catch (Exception ex) { MessageBox.Show("删除失败: " + ex.Message); }
+                catch (System.Exception ex) { MessageBox.Show("删除失败: " + ex.Message); }
             }
         }
 
@@ -526,32 +526,56 @@ namespace CadAtlasManager
 
         // ========================= 其他基础逻辑 =========================
 
+        // [修改文件: UI/AtlasView.xaml.cs]
+
         private void OnTreeItemClick(object sender, MouseButtonEventArgs e)
         {
-            var element = e.OriginalSource as FrameworkElement;
-            if (element != null && !(element.DataContext is FileSystemItem)) return;
-            var clickedItem = element?.DataContext as FileSystemItem;
+            // 1. 【关键修改】必须调用这个方法，才能穿透文字找到背后的数据
+            var clickedItem = GetClickedItem(e);
+
+            // 如果没点到任何项（比如点到了空白处），直接返回
             if (clickedItem == null) return;
 
             var treeView = sender as TreeView;
             var allItems = treeView.ItemsSource as ObservableCollection<FileSystemItem>;
 
+            // 2. 处理多选 (Ctrl)
             if (Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl))
             {
-                clickedItem.IsItemSelected = !clickedItem.IsItemSelected;
+                clickedItem.IsItemSelected = !clickedItem.IsItemSelected; // 反选
                 _lastSelectedItem = clickedItem;
             }
+            // 3. 处理连选 (Shift)
             else if (Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift))
             {
-                if (_lastSelectedItem != null && allItems != null) SelectRange(allItems, _lastSelectedItem, clickedItem);
+                if (_lastSelectedItem != null && allItems != null)
+                    SelectRange(allItems, _lastSelectedItem, clickedItem);
             }
+            // 4. 处理单选
             else
             {
-                if (!clickedItem.IsItemSelected || element is TextBlock || element is Grid) // 点击了内容
+                // 排除点击箭头（折叠/展开）的情况
+                var originalObj = e.OriginalSource as DependencyObject;
+                bool isArrow = false;
+                while (originalObj != null && !(originalObj is TreeViewItem))
                 {
+                    if (originalObj is System.Windows.Controls.Primitives.ToggleButton)
+                    {
+                        isArrow = true;
+                        break;
+                    }
+                    originalObj = VisualTreeHelper.GetParent(originalObj);
+                }
+
+                // 只有点在非箭头区域，才触发单选逻辑
+                if (!isArrow)
+                {
+                    // 如果它还没被选中，或者为了清除其他多选项 -> 执行单选
+                    // (注意：这里不要加 !clickedItem.IsItemSelected 判断，否则单机已选项无法清除其他多选项)
                     ClearAllSelection(Items);
                     ClearAllSelection(ProjectTreeItems);
                     ClearAllSelection(PlotTreeItems);
+
                     clickedItem.IsItemSelected = true;
                     _lastSelectedItem = clickedItem;
                 }
@@ -636,7 +660,7 @@ namespace CadAtlasManager
                     RefreshProjectTree();
                     if (successCount > 0) MessageBox.Show($"成功复制 {successCount} 个文件到：\n{targetDir}");
                 }
-                catch (Exception ex) { MessageBox.Show("复制失败: " + ex.Message); }
+                catch (System.Exception ex) { MessageBox.Show("复制失败: " + ex.Message); }
             }
         }
 
@@ -696,7 +720,7 @@ namespace CadAtlasManager
                         Process.Start("explorer.exe", "/select,\"" + zipFullPath + "\"");
                     }
                 }
-                catch (Exception ex) { MessageBox.Show("打包失败: " + ex.Message); }
+                catch (System.Exception ex) { MessageBox.Show("打包失败: " + ex.Message); }
             }
         }
 
@@ -881,22 +905,27 @@ namespace CadAtlasManager
 
         // [修改文件: UI/AtlasView.xaml.cs] 请将此方法添加到类中
 
+        // [修改文件: UI/AtlasView.xaml.cs]
+
         private void OnTreeItemRightClick(object sender, MouseButtonEventArgs e)
         {
-            var clickedItem = GetClickedItem(e); // 复用上面修复后的方法
+            var clickedItem = GetClickedItem(e);
             if (clickedItem != null)
             {
-                // 1. 清除旧选择
+                // 1. 【核心修复】如果点击的项已经是选中状态，则保留多选，什么都不做
+                // 这样右键菜单就会基于当前的多选列表弹出来
+                if (clickedItem.IsItemSelected)
+                {
+                    return;
+                }
+
+                // 2. 如果点击的项没被选中，则按标准流程：清除旧选择 -> 选中当前项
                 ClearAllSelection(Items);
                 ClearAllSelection(ProjectTreeItems);
                 ClearAllSelection(PlotTreeItems);
 
-                // 2. 选中当前项
                 clickedItem.IsItemSelected = true;
                 _lastSelectedItem = clickedItem;
-
-                // 3. 标记事件已处理 (防止冒泡)
-                // e.Handled = true; // 视情况而定，通常不需要，否则ContextMenu可能出不来
             }
         }
         private FileSystemItem GetClickedItem(MouseButtonEventArgs e)
@@ -921,28 +950,41 @@ namespace CadAtlasManager
             // 如果找到了 TreeViewItem，返回其绑定的数据
             return (obj as TreeViewItem)?.DataContext as FileSystemItem;
         }
+        // [修改文件: UI/AtlasView.xaml.cs]
+
         private void ExecuteFileAction(FileSystemItem i)
         {
-            string m = "Read"; if (RbEdit.IsChecked == true) m = "Edit"; if (RbCopy.IsChecked == true) m = "Copy"; if (m == "Copy")
+            // 1. 确定操作模式
+            string mode = "Read";
+            if (RbEdit.IsChecked == true) mode = "Edit";
+            if (RbCopy.IsChecked == true) mode = "Copy";
+
+            // 2. 根据模式执行
+            if (mode == "Copy")
             {
-                // 1. 定义默认路径：优先使用激活项目的路径，如果没有激活项目，则使用原文件所在路径
+                // --- 复制模式 ---
                 string defaultPath = Path.GetDirectoryName(i.FullPath);
-                if (_activeProject != null && System.IO.Directory.Exists(_activeProject.Path))
+                if (_activeProject != null && Directory.Exists(_activeProject.Path))
                 {
                     defaultPath = _activeProject.Path;
                 }
 
-                // 2. 将计算好的 defaultPath 传入弹窗构造函数
                 var d = new CopyMoveDialog(defaultPath, i.Name, false);
                 d.Title = "复制副本";
 
-                // 3. 显示弹窗
                 if (d.ShowDialog() == true)
                 {
                     OpenFileSmart(i.FullPath, "Copy", Path.Combine(d.SelectedPath, d.FileName));
-                    // 如果保存到了项目目录下，刷新项目树
-                    if (_activeProject != null && d.SelectedPath.StartsWith(_activeProject.Path)) RefreshProjectTree();
+
+                    if (_activeProject != null && d.SelectedPath.StartsWith(_activeProject.Path))
+                        RefreshProjectTree();
                 }
+            }
+            else
+            {
+                // --- 【核心修复】只读/编辑模式 ---
+                // 之前这里漏了代码，导致双击没反应
+                OpenFileSmart(i.FullPath, mode);
             }
         }
         private void OpenFileSmart(string s, string m, string d = null) { string f = s; if (m == "Copy" && !string.IsNullOrEmpty(d)) { try { File.Copy(s, d, true); f = d; m = "Edit"; } catch { return; } } string x = Path.GetExtension(f).ToLower(); if (x == ".dwg" || x == ".dxf") CadService.OpenDwg(f, m); else Process.Start(new ProcessStartInfo(f) { UseShellExecute = true }); }

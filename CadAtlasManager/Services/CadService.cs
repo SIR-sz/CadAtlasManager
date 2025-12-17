@@ -26,13 +26,55 @@ namespace CadAtlasManager
         // ... [GetSmartFingerprint, OpenDwg, InsertDwgAsBlock 保持不变] ...
         #region 1. 基础 API (请保留)
         public static string GetSmartFingerprint(string dwgPath) { /* ...保留原代码... */ return "0"; }
+        // [修改文件: Services/CadService.cs]
+
         public static void OpenDwg(string sourcePath, string mode, string targetCopyPath = null)
         {
+            // 1. 检查文件是否存在
             if (!File.Exists(sourcePath))
             {
-                // 【新增】如果文件找不到，弹出提示，而不是没反应
-                System.Windows.MessageBox.Show($"文件不存在或路径错误：\n{sourcePath}", "打开失败");
+                System.Windows.MessageBox.Show($"文件不存在：\n{sourcePath}", "打开失败");
                 return;
+            }
+
+            DocumentCollection acDocMgr = Application.DocumentManager;
+            string finalOpenPath = sourcePath;
+            bool isReadOnly = (mode == "Read");
+
+            // 2. 处理复制模式
+            if (mode == "Copy" && !string.IsNullOrEmpty(targetCopyPath))
+            {
+                try
+                {
+                    File.Copy(sourcePath, targetCopyPath, true);
+                    finalOpenPath = targetCopyPath;
+                    isReadOnly = false; // 副本默认可编辑
+                }
+                catch (System.Exception ex)
+                {
+                    System.Windows.MessageBox.Show($"复制文件失败: {ex.Message}");
+                    return;
+                }
+            }
+
+            // 3. 检查是否已经打开
+            foreach (Document doc in acDocMgr)
+            {
+                if (doc.Name.Equals(finalOpenPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    acDocMgr.MdiActiveDocument = doc; // 激活它
+                    return;
+                }
+            }
+
+            // 4. 【核心修复】执行打开操作 (之前漏了这行)
+            try
+            {
+                acDocMgr.Open(finalOpenPath, isReadOnly);
+            }
+            catch (System.Exception ex)
+            {
+                System.Windows.MessageBox.Show($"CAD 无法打开文件:\n{ex.Message}");
             }
         }
         public static void InsertDwgAsBlock(string f) { /* ...保留原代码... */ }
