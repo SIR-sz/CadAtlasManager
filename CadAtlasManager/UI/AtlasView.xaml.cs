@@ -36,6 +36,9 @@ namespace CadAtlasManager
         private ProjectItem _activeProject = null;
         private readonly string _versionInfo = "CAD图集管理器 v3.6 (Refactored)\n\n更新：\n1. 代码结构重构优化\n2. 准备接入新功能";
 
+        // 放在 AtlasView 类内部
+        private enum PdfStatus { Latest, Expired, MissingSource, Unknown }
+
         private Point _dragStartPoint;
         private FileSystemItem _draggedItem;
 
@@ -310,16 +313,22 @@ namespace CadAtlasManager
             Mouse.OverrideCursor = Cursors.Wait;
             try
             {
-                // 收集源文件路径
                 List<string> sourceFiles = targets.Select(t => t.FullPath).ToList();
 
-                // 调用合并核心方法
+                // 执行合并
                 MergePdfFiles(sourceFiles, savePath);
 
-                MessageBox.Show($"成功合并 {targets.Count} 个文件！\n已保存至：成果 PDF 目录", "成功");
+                // =========================================================
+                // ✅ 新增：保存合并文件的依赖关系
+                // =========================================================
+                // 我们只记录文件名，因为都在 _Plot 体系下
+                var sourcePdfNames = targets.Select(t => t.Name).ToList();
+                string combinedFileName = Path.GetFileName(savePath);
 
-                // 5. 刷新界面
-                // 既然文件保存到了 "Combined" (成果 PDF)，我们应该刷新整个树，让用户能看到新文件
+                PlotMetaManager.SaveCombinedRecord(_activeProject.OutputPath, combinedFileName, sourcePdfNames);
+                // =========================================================
+
+                MessageBox.Show($"成功合并 {targets.Count} 个文件！...", "成功");
                 RefreshPlotTree();
             }
             catch (Exception ex)
@@ -331,7 +340,86 @@ namespace CadAtlasManager
                 Mouse.OverrideCursor = null;
             }
         }
+        // =================================================================
+        // 【新增功能】打开分项 PDF 对应的源 DWG 文件
+        // =================================================================
+        private void BtnOpenSourceDwg_Click(object sender, RoutedEventArgs e)
+        {
+            // 1. 基础检查
+            if (_activeProject == null) return;
 
+            // 获取列表选中项 (注意：这里只支持单选打开，如果多选了，只打开第一个或提示)
+            var item = PlotFileList.SelectedItem as FileSystemItem;
+
+            if (item == null || item.Type != ExplorerItemType.File || !item.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("请先在列表中选择一个 PDF 文件。", "提示");
+                return;
+            }
+
+            // 2. 检查是否为“合并文件” (合并文件没有单一的源 DWG，不能打开)
+            string plotDir = _activeProject.OutputPath;
+            if (PlotMetaManager.IsCombinedFile(plotDir, item.Name))
+            {
+                MessageBox.Show("这是一个合并后的成果 PDF，包含多个源文件。\n无法直接定位到单一的 DWG 图纸。", "提示");
+                return;
+            }
+
+            // 3. 开始寻找源文件
+            // A. 优先从历史记录反查 (最准确，能处理改名情况)
+            string realDwgName = PlotMetaManager.GetSourceDwgName(plotDir, item.Name);
+
+            // B. 历史记录查不到，尝试智能猜测 (去除 _1, _2 等布局后缀)
+            // 例如：Drawing1_1.pdf -> 猜测源文件是 Drawing1.dwg
+            if (string.IsNullOrEmpty(realDwgName))
+            {
+                string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(item.Name), @"_\d+$", "");
+                realDwgName = baseName + ".dwg";
+            }
+
+            // 4. 定位文件路径
+            // 先尝试在项目根目录找
+            string sourceDwgPath = Path.Combine(_activeProject.Path, realDwgName);
+
+            if (!File.Exists(sourceDwgPath))
+            {
+                // 如果根目录没有，可能是文件被整理到子文件夹了
+                // 进行全项目递归搜索 (只搜文件名)
+                try
+                {
+                    string onlyFileName = Path.GetFileName(realDwgName);
+                    var foundFiles = Directory.GetFiles(_activeProject.Path, onlyFileName, SearchOption.AllDirectories);
+
+                    if (foundFiles.Length > 0)
+                    {
+                        // 找到了！取第一个匹配项
+                        sourceDwgPath = foundFiles[0];
+                    }
+                    else
+                    {
+                        // 彻底没找到
+                        MessageBox.Show($"未找到源文件：\n{realDwgName}\n\n可能原因：\n1. DWG文件已被重命名或删除\n2. 该PDF不是由当前项目图纸生成的", "文件丢失");
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("搜索源文件时出错: " + ex.Message);
+                    return;
+                }
+            }
+
+            // 5. 执行打开
+            try
+            {
+                // "Edit" 模式表示以读写方式打开，方便用户修改
+                CadService.OpenDwg(sourceDwgPath, "Edit");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("打开 CAD 图纸失败: " + ex.Message);
+            }
+        }
         // 3. PdfSharp 合并核心逻辑
         private void MergePdfFiles(List<string> sourceFiles, string destFile)
         {
@@ -1164,72 +1252,109 @@ namespace CadAtlasManager
             }
         }
 
-        /// =========================================================
-        // 【核心修改】文件校验逻辑
         // =========================================================
-        private void ValidatePdfVersion(FileSystemItem pdfItem)
-        {
-            string pdfName = pdfItem.Name;
+        // 【Phase 3 重构】智能递归版本校验
+        // =========================================================
 
-            // 1. 优先从历史记录反查 DWG 文件名 (包含相对路径信息)
+        private void ValidatePdfVersion(FileSystemItem item)
+        {
+            // 调用核心逻辑获取状态
+            PdfStatus status = GetPdfStatusRecursive(item.Name);
+
+            // 根据状态更新 UI
+            switch (status)
+            {
+                case PdfStatus.Latest:
+                    item.VersionStatus = "✅ 最新";
+                    item.StatusColor = Brushes.Green;
+                    break;
+                case PdfStatus.Expired:
+                    item.VersionStatus = "⚠️ 已过期";
+                    item.StatusColor = Brushes.Red;
+                    break;
+                case PdfStatus.MissingSource:
+                    item.VersionStatus = "❓ 源缺失";
+                    item.StatusColor = Brushes.Gray;
+                    break;
+                default:
+                    item.VersionStatus = ""; // 未知状态不显示
+                    break;
+            }
+        }
+
+        // 递归核心逻辑
+        private PdfStatus GetPdfStatusRecursive(string pdfName)
+        {
+            string plotDir = _activeProject.OutputPath;
+
+            // 1. 判断是否为合并文件
+            if (PlotMetaManager.IsCombinedFile(plotDir, pdfName))
+            {
+                // --- 合并文件逻辑 ---
+                var sources = PlotMetaManager.GetCombinedSources(plotDir, pdfName);
+                if (sources == null || sources.Count == 0) return PdfStatus.Unknown;
+
+                bool anyExpired = false;
+                bool anyMissing = false;
+
+                foreach (var sourcePdf in sources)
+                {
+                    // 递归检查每一个源 PDF 的状态
+                    var subStatus = GetPdfStatusRecursive(sourcePdf);
+
+                    if (subStatus == PdfStatus.MissingSource) anyMissing = true;
+                    if (subStatus == PdfStatus.Expired) anyExpired = true;
+                }
+
+                // 判定规则：
+                // 1. 如果有任何源文件找不到 -> 源缺失
+                // 2. 如果有任何源文件过期 -> 整体过期 (一票否决)
+                // 3. 否则 -> 最新
+                if (anyMissing) return PdfStatus.MissingSource;
+                if (anyExpired) return PdfStatus.Expired;
+                return PdfStatus.Latest;
+            }
+            else
+            {
+                // --- 普通文件逻辑 (DWG -> PDF) ---
+                return CheckSingleDwgStatus(pdfName);
+            }
+        }
+
+        // 单个 DWG 状态检查 (从原 ValidatePdfVersion 提取并优化)
+        private PdfStatus CheckSingleDwgStatus(string pdfName)
+        {
+            // 1. 查名字
             string realDwgName = PlotMetaManager.GetSourceDwgName(_activeProject.OutputPath, pdfName);
 
-            // 2. 如果历史记录查不到，尝试智能猜测 (去掉 _1, _2 后缀)
+            // 猜名字
             if (string.IsNullOrEmpty(realDwgName))
             {
                 string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(pdfName), @"_\d+$", "");
                 realDwgName = baseName + ".dwg";
             }
 
-            // 3. 构建源文件路径 (先尝试直接在项目根目录找)
+            // 2. 找文件
             string sourceDwgPath = Path.Combine(_activeProject.Path, realDwgName);
-
-            // 【关键修复】如果根目录找不到，进行全目录递归搜索 (解决子文件夹文件丢失问题)
             if (!File.Exists(sourceDwgPath))
             {
-                // 仅搜索文件名
-                string onlyFileName = Path.GetFileName(realDwgName);
+                // 递归搜
                 try
                 {
-                    // 在项目目录下递归搜索同名文件
+                    string onlyFileName = Path.GetFileName(realDwgName);
                     var foundFiles = Directory.GetFiles(_activeProject.Path, onlyFileName, SearchOption.AllDirectories);
-                    if (foundFiles.Length > 0)
-                    {
-                        // 找到第一个匹配的
-                        sourceDwgPath = foundFiles[0];
-                        // 更新一下 realDwgName 为文件名，以便后续逻辑统一
-                        realDwgName = Path.GetFileName(sourceDwgPath);
-                    }
+                    if (foundFiles.Length > 0) sourceDwgPath = foundFiles[0];
+                    else return PdfStatus.MissingSource; // 彻底找不到
                 }
-                catch { } // 忽略权限错误等
+                catch { return PdfStatus.MissingSource; }
             }
 
-            // 4. 最终检查文件是否存在
-            if (!File.Exists(sourceDwgPath))
-            {
-                pdfItem.VersionStatus = "❓ 源文件丢失";
-                pdfItem.StatusColor = Brushes.Gray;
-                return;
-            }
-
-            // 5. 校验状态 (传入 Tduupdate 获取委托)
-            // 获取当前源文件的时间戳 (文件系统)
+            // 3. 校验指纹
             string currentTimestamp = CadService.GetFileTimestamp(sourceDwgPath);
+            bool isLatest = PlotMetaManager.CheckStatus(_activeProject.OutputPath, pdfName, Path.GetFileName(sourceDwgPath), currentTimestamp,
+                () => CadService.GetContentFingerprint(sourceDwgPath));
 
-            // 调用 Manager 进行比对
-            bool isLatest = PlotMetaManager.CheckStatus(_activeProject.OutputPath, pdfName, realDwgName, currentTimestamp,
-                () => CadService.GetContentFingerprint(sourceDwgPath)); // 这里会读取 Tduupdate
-
-            if (!isLatest)
-            {
-                pdfItem.VersionStatus = "⚠️ 已过期";
-                pdfItem.StatusColor = Brushes.Red;
-            }
-            else
-            {
-                pdfItem.VersionStatus = "✅ 最新";
-                pdfItem.StatusColor = Brushes.Green;
-            }
+            return isLatest ? PdfStatus.Latest : PdfStatus.Expired;
         }
 
         // =================================================================

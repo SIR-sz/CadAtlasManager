@@ -287,7 +287,9 @@
                             <Button Content="🔄 刷新" Click="BtnRefreshPlot_Click" Margin="0,0,20,0"/>
 
                             <Button Content="🗑️ 删除" Click="BtnDeletePlotFiles_Click" Margin="0,0,5,0" Foreground="Red"/>
-                            <Button Content="📄+📄 合并PDF" Click="BtnMergePdf_Click" ToolTip="合并选中的PDF文件"/>
+                            <Button Content="📄+📄 合并PDF" Click="BtnMergePdf_Click" ToolTip="合并选中的PDF文件" Margin="0,0,5,0"/>
+
+                            <Button Content="📂 打开源文件" Click="BtnOpenSourceDwg_Click" ToolTip="打开当前PDF对应的DWG图纸"/>
                         </StackPanel>
                     </StackPanel>
 

@@ -10,8 +10,11 @@ namespace CadAtlasManager
     {
         private const string HIDDEN_DIR = ".cadatlas";
         private const string HISTORY_FILE = "plot_history.json";
+        private const string COMBINED_PREFIX = "COMBINED|";
 
-        // 格式: PDF名 -> "DwgName | Tduupdate | FileTimestamp"
+        // 缓存字典
+        // 普通记录: PDF名 -> "DwgName | Tduupdate | FileTimestamp"
+        // 合并记录: PDF名 -> "COMBINED|Source1.pdf;Source2.pdf;..."
         private static Dictionary<string, string> _historyCache = new Dictionary<string, string>();
 
         public static void LoadHistory(string plotFolder)
@@ -33,66 +36,104 @@ namespace CadAtlasManager
             }
         }
 
+        // 1. 保存普通打印记录 (DWG -> PDF)
         public static void SaveRecord(string plotFolder, string pdfName, string dwgName, string fingerprint, string timestamp)
         {
-            if (!_historyCache.ContainsKey(pdfName) && _historyCache.Count == 0) LoadHistory(plotFolder);
-
+            EnsureLoaded(plotFolder);
             string data = $"{dwgName}|{fingerprint}|{timestamp}";
             _historyCache[pdfName] = data;
-
             WriteToDisk(plotFolder);
         }
 
+        // 2. 【新增】保存合并记录 (List<PDF> -> CombinedPDF)
+        public static void SaveCombinedRecord(string plotFolder, string combinedPdfName, List<string> sourcePdfNames)
+        {
+            EnsureLoaded(plotFolder);
+            // 格式: COMBINED|Source1.pdf;Source2.pdf
+            string data = COMBINED_PREFIX + string.Join(";", sourcePdfNames);
+            _historyCache[combinedPdfName] = data;
+            WriteToDisk(plotFolder);
+        }
+
+        // 3. 【新增】判断是否为合并文件
+        public static bool IsCombinedFile(string plotFolder, string pdfName)
+        {
+            EnsureLoaded(plotFolder);
+            return _historyCache.ContainsKey(pdfName) && _historyCache[pdfName].StartsWith(COMBINED_PREFIX);
+        }
+
+        // 4. 【新增】获取合并文件的源文件列表
+        public static List<string> GetCombinedSources(string plotFolder, string pdfName)
+        {
+            EnsureLoaded(plotFolder);
+            if (_historyCache.TryGetValue(pdfName, out string val))
+            {
+                if (val.StartsWith(COMBINED_PREFIX))
+                {
+                    string raw = val.Substring(COMBINED_PREFIX.Length);
+                    return raw.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries).ToList();
+                }
+            }
+            return new List<string>();
+        }
+
+        // 5. 获取普通文件的源 DWG 名称
         public static string GetSourceDwgName(string plotFolder, string pdfName)
         {
-            if (_historyCache.Count == 0) LoadHistory(plotFolder);
-
+            EnsureLoaded(plotFolder);
             if (_historyCache.ContainsKey(pdfName))
             {
-                var parts = _historyCache[pdfName].Split('|');
-                if (parts.Length >= 1) return parts[0];
+                string val = _historyCache[pdfName];
+                if (!val.StartsWith(COMBINED_PREFIX))
+                {
+                    var parts = val.Split('|');
+                    if (parts.Length >= 1) return parts[0];
+                }
             }
             return null;
         }
 
+        // 6. 核心校验逻辑 (针对单张 DWG 导出的 PDF)
         public static bool CheckStatus(string plotFolder, string pdfName, string currentDwgName, string currentTimestamp, Func<string> funcToGetFingerprint)
         {
-            if (_historyCache.Count == 0) LoadHistory(plotFolder);
+            EnsureLoaded(plotFolder);
 
             if (!_historyCache.ContainsKey(pdfName)) return false;
 
             string savedData = _historyCache[pdfName];
-            var parts = savedData.Split('|');
+            // 如果是合并文件，这里不处理，返回 false
+            if (savedData.StartsWith(COMBINED_PREFIX)) return false;
 
+            var parts = savedData.Split('|');
             if (parts.Length < 3) return false;
 
             string savedName = parts[0];
-            string savedFingerprint = parts[1]; // 这是打印时的 Tduupdate
+            string savedFingerprint = parts[1];
             string savedTime = parts[2];
 
-            // 1. 文件名简单核对 (忽略大小写)
+            // 1. 文件名核对
             if (!savedName.Equals(currentDwgName, StringComparison.OrdinalIgnoreCase)) return false;
 
-            // 2. 如果文件系统时间戳没变，直接认为是最新的 (最快，毫秒级)
+            // 2. 时间戳核对 (最快)
             if (savedTime == currentTimestamp) return true;
 
-            // 3. 如果时间戳变了 (可能是复制文件，也可能是编辑了)
-            // 读取当前的 Tduupdate (需要读文件头，稍慢)
+            // 3. 读取 Tduupdate 核对 (较慢但准确)
             string currentFingerprint = funcToGetFingerprint();
-
             if (currentFingerprint == "FILE_NOT_FOUND") return false;
 
-            // 4. 对比 Tduupdate
             if (currentFingerprint == savedFingerprint)
             {
-                // Tduupdate 没变，说明只是文件被复制/移动/误触保存，但 CAD 内容没变
-                // 视为最新，并自动修复记录中的时间戳，下次校验就快了
+                // 内容没变，只是时间变了 -> 更新记录以加速下次校验
                 SaveRecord(plotFolder, pdfName, currentDwgName, savedFingerprint, currentTimestamp);
                 return true;
             }
 
-            // Tduupdate 变了 -> 说明 CAD 里保存过 -> 真的过期了
             return false;
+        }
+
+        private static void EnsureLoaded(string plotFolder)
+        {
+            if (_historyCache.Count == 0) LoadHistory(plotFolder);
         }
 
         private static void WriteToDisk(string plotFolder)
