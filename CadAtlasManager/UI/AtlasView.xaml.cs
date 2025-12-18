@@ -1,5 +1,4 @@
 ﻿// 【关键修改：引用新拆分的命名空间】
-using Autodesk.AutoCAD.ApplicationServices;
 using CadAtlasManager.Models;
 using CadAtlasManager.UI;
 // 添加这两个引用
@@ -37,7 +36,8 @@ namespace CadAtlasManager
         private readonly string _versionInfo = "CAD图集管理器 v3.6 (Refactored)\n\n更新：\n1. 代码结构重构优化\n2. 准备接入新功能";
 
         // 放在 AtlasView 类内部
-        private enum PdfStatus { Latest, Expired, MissingSource, Unknown }
+        // 1. 扩展状态枚举
+        private enum PdfStatus { Latest, Expired, MissingSource, NeedRemerge, Unknown }
 
         private Point _dragStartPoint;
         private FileSystemItem _draggedItem;
@@ -73,58 +73,49 @@ namespace CadAtlasManager
             CbProjects.ItemsSource = ProjectList;
             LoadConfig();
         }
+        // [修改方法：RefreshPlotTree]
         private void RefreshPlotTree()
         {
             PlotFolderItems.Clear();
             PlotFileListItems.Clear();
 
-            if (_activeProject == null) return;
+            if (_activeProject == null || !Directory.Exists(_activeProject.Path)) return;
 
-            // 1. 确保基础路径存在
-            if (string.IsNullOrEmpty(_activeProject.OutputPath))
-                _activeProject.OutputPath = Path.Combine(_activeProject.Path, "_Plot");
+            // --- 核心改造点 3：递归搜寻所有包含 _Plot 的文件夹 ---
+            var stageDirs = Directory.GetDirectories(_activeProject.Path, "_Plot", SearchOption.AllDirectories);
 
-            if (!Directory.Exists(_activeProject.OutputPath))
+            foreach (var plotPath in stageDirs)
             {
-                try { Directory.CreateDirectory(_activeProject.OutputPath); } catch { }
+                // 获取 _Plot 的上一级目录名作为“阶段名称”
+                string stageDir = Path.GetDirectoryName(plotPath);
+                string stageName = (stageDir == _activeProject.Path) ? "项目根目录" : Path.GetFileName(stageDir);
+
+                // 创建第一级：阶段节点
+                var stageNode = new FileSystemItem
+                {
+                    Name = stageName,
+                    FullPath = stageDir, // 记录父目录路径，方便后续定位
+                    Type = ExplorerItemType.Folder,
+                    TypeIcon = "🏗️",
+                    IsExpanded = true
+                };
+
+                // 创建第二级：分项 PDF
+                var itemSplit = CreateItem(plotPath, ExplorerItemType.Folder);
+                itemSplit.Name = "📄 分项 PDF";
+                LoadPlotFoldersOnly(itemSplit, "Combined"); // 排除合并目录
+
+                // 创建第二级：成果 PDF
+                string combinedPath = Path.Combine(plotPath, "Combined");
+                if (!Directory.Exists(combinedPath)) Directory.CreateDirectory(combinedPath);
+                var itemCombined = CreateItem(combinedPath, ExplorerItemType.Folder);
+                itemCombined.Name = "📑 成果 PDF";
+
+                stageNode.Children.Add(itemSplit);
+                stageNode.Children.Add(itemCombined);
+
+                PlotFolderItems.Add(stageNode);
             }
-            if (!Directory.Exists(_activeProject.OutputPath)) return;
-
-            // 2. 创建“成果 PDF”目录 (物理隔离，管理更清晰)
-            string combinedPath = Path.Combine(_activeProject.OutputPath, "Combined");
-            if (!Directory.Exists(combinedPath)) Directory.CreateDirectory(combinedPath);
-
-            // =========================================================
-            // 构建左侧树：两个固定节点
-            // =========================================================
-
-            // A. 节点：分项 PDF (对应 _Plot 根目录)
-            var itemSplit = CreateItem(_activeProject.OutputPath, ExplorerItemType.Folder, true);
-            itemSplit.Name = "📄 分项 PDF"; // 改名
-            itemSplit.TypeIcon = "📂";
-
-            // 加载子文件夹 (但要排除 Combined 文件夹，防止重复显示)
-            LoadPlotFoldersOnly(itemSplit, "Combined");
-            PlotFolderItems.Add(itemSplit);
-
-            // B. 节点：成果 PDF (对应 _Plot\Combined 子目录)
-            var itemCombined = CreateItem(combinedPath, ExplorerItemType.Folder, true);
-            itemCombined.Name = "📑 成果 PDF"; // 新增项
-            itemCombined.TypeIcon = "📚";
-
-            // 成果目录下通常不需要再分级，当然也可以加载
-            LoadPlotFoldersOnly(itemCombined);
-            PlotFolderItems.Add(itemCombined);
-
-            // =========================================================
-            // ✅ 自动加载逻辑
-            // =========================================================
-            // 默认展开“分项 PDF”并选中
-            itemSplit.IsExpanded = true;
-            itemSplit.IsItemSelected = true; // 设定 UI 选中状态
-
-            // 强制加载“分项 PDF”下的文件到右侧列表
-            LoadPlotFilesList(itemSplit);
         }
 
         // 修改方法签名，增加 excludeName 参数，默认由 null
@@ -251,17 +242,15 @@ namespace CadAtlasManager
                 MessageBox.Show($"删除过程中发生错误：\n{ex.Message}", "错误");
             }
 
-            // 刷新当前列表
-            // 获取当前选中的文件夹节点，重新加载它的内容
-            var currentFolder = GetSelectedItem();
-            if (currentFolder != null && currentFolder.Type == ExplorerItemType.Folder)
+            // 刷新逻辑改进
+            var currentFolder = PlotFolderTree.SelectedItem as FileSystemItem;
+            if (currentFolder != null)
             {
-                LoadPlotFilesList(currentFolder);
+                LoadPlotFilesList(currentFolder); // 仅刷新右侧列表，速度最快
             }
             else
             {
-                // 如果找不到当前节点，就刷新整个树
-                RefreshPlotTree();
+                RefreshPlotTree(); // 保底刷新全树
             }
 
             if (successCount > 0)
@@ -270,75 +259,44 @@ namespace CadAtlasManager
             }
         }
 
-        // 2. 合并 PDF 功能
+        // [修改方法: BtnMergePdf_Click]
         private void BtnMergePdf_Click(object sender, RoutedEventArgs e)
         {
-            // 1. 获取勾选的 PDF 文件
-            // 注意：我们按照文件名排序，确保合并顺序符合直觉
             var targets = PlotFileListItems
-                .Where(i => i.IsChecked && i.FullPath.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(i => i.Name)
-                .ToList();
+                .Where(i => i.IsChecked && i.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(i => i.Name).ToList();
 
-            if (targets.Count < 2)
-            {
-                MessageBox.Show("请至少勾选 2 个 PDF 文件进行合并。", "提示");
-                return;
-            }
+            if (targets.Count < 2) { MessageBox.Show("请至少勾选 2 个文件。"); return; }
 
-            // 2. 弹出重命名框 (复用已有的 RenameDialog)
-            // 默认文件名：取第一个文件的名字 + "_合并"
+            // 【关键修改】动态获取当前阶段的 _Plot 目录
+            string currentPlotDir = GetCurrentPlotDir();
+            if (string.IsNullOrEmpty(currentPlotDir)) return;
+
             string defaultName = Path.GetFileNameWithoutExtension(targets[0].Name) + "_合并";
-            var dlg = new RenameDialog(defaultName);
-            dlg.Title = "合并 PDF - 输入新文件名";
-
+            var dlg = new RenameDialog(defaultName) { Title = "合并 PDF" };
             if (dlg.ShowDialog() != true) return;
 
-            // 3. 确定保存路径
-            // 为了管理规范，我们将所有合并成果统一存放到 "Combined" 文件夹
-            string saveDir = Path.Combine(_activeProject.OutputPath, "Combined");
+            string saveDir = Path.Combine(currentPlotDir, "Combined"); // 保存到当前阶段的 Combined
             if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
 
             string savePath = Path.Combine(saveDir, dlg.NewName + ".pdf");
 
-            // 检查重名
-            if (File.Exists(savePath))
-            {
-                if (MessageBox.Show($"文件 {dlg.NewName}.pdf 已存在，是否覆盖？", "覆盖确认",
-                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-                    return;
-            }
-
-            // 4. 执行合并
             Mouse.OverrideCursor = Cursors.Wait;
             try
             {
-                List<string> sourceFiles = targets.Select(t => t.FullPath).ToList();
+                MergePdfFiles(targets.Select(t => t.FullPath).ToList(), savePath);
 
-                // 执行合并
-                MergePdfFiles(sourceFiles, savePath);
+                // 记录合并关系到当前阶段的元数据中
+                PlotMetaManager.SaveCombinedRecord(currentPlotDir, Path.GetFileName(savePath), targets);
 
-                // =========================================================
-                // ✅ 新增：保存合并文件的依赖关系
-                // =========================================================
-                // 我们只记录文件名，因为都在 _Plot 体系下
-                var sourcePdfNames = targets.Select(t => t.Name).ToList();
-                string combinedFileName = Path.GetFileName(savePath);
+                MessageBox.Show("成功合并到当前阶段成果库。");
 
-                PlotMetaManager.SaveCombinedRecord(_activeProject.OutputPath, combinedFileName, sourcePdfNames);
-                // =========================================================
-
-                MessageBox.Show($"成功合并 {targets.Count} 个文件！...", "成功");
-                RefreshPlotTree();
+                // 局部刷新：重新加载当前选中的文件夹内容
+                if (PlotFolderTree.SelectedItem is FileSystemItem currentFolder)
+                    LoadPlotFilesList(currentFolder);
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"合并失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-            finally
-            {
-                Mouse.OverrideCursor = null;
-            }
+            catch (Exception ex) { MessageBox.Show("合并失败: " + ex.Message); }
+            finally { Mouse.OverrideCursor = null; }
         }
         // =================================================================
         // 【新增功能】打开分项 PDF 对应的源 DWG 文件
@@ -630,154 +588,142 @@ namespace CadAtlasManager
         }
 
 
-        // =================================================================
-        // 【重构】批量打印流程 (智能筛选 + 统一参数 + 防崩溃修复)
-        // =================================================================
-
+        // [修改方法：MenuItem_BatchPlot_Click]
         private void MenuItem_BatchPlot_Click(object sender, RoutedEventArgs e)
         {
-            // 1. 基础检查
-            if (_activeProject == null)
-            {
-                MessageBox.Show("请先在项目工作台中选择一个项目。");
-                return;
-            }
+            if (_activeProject == null) { MessageBox.Show("请先选择一个项目。"); return; }
 
-            // 2. 获取需要打印的 DWG 文件
             var selectedItems = GetAllSelectedItems();
-            // 智能容错：如果没有多选，但当前选中了一个文件，则当作单选处理
-            if (selectedItems.Count == 0 && GetSelectedItem() != null)
-            {
-                selectedItems.Add(GetSelectedItem());
-            }
+            if (selectedItems.Count == 0 && GetSelectedItem() != null) selectedItems.Add(GetSelectedItem());
 
             var dwgFiles = selectedItems
                 .Where(i => i.Type == ExplorerItemType.File && i.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            if (dwgFiles.Count == 0)
-            {
-                MessageBox.Show("请选择至少一个 DWG 图纸文件。");
-                return;
-            }
+            if (dwgFiles.Count == 0) return;
 
-            // =================================================================
-            // 【核心修复】防止“零文档状态”导致崩溃
-            // 如果当前 CAD 没有打开任何图纸，打印引擎会初始化失败导致闪退。
-            // 这里自动新建一个空白文档作为“垫底”，确保环境安全。
-            // =================================================================
-            if (Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.Count == 0)
-            {
-                try
-                {
-                    // Add(null) 会使用默认模板新建一个 Drawing1.dwg
-                    Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.Add(null);
-                }
-                catch
-                {
-                    // 忽略新建失败的情况，继续尝试打印，避免阻断流程
-                }
-            }
-            // =================================================================
+            // --- 核心改造点 1：按文件夹对 DWG 分组 ---
+            var groupedFiles = dwgFiles.GroupBy(f => Path.GetDirectoryName(f.FullPath));
 
-            // 3. 准备输出目录 (_Plot)
-            string outputDir = Path.Combine(_activeProject.Path, "_Plot");
-            if (!Directory.Exists(outputDir)) Directory.CreateDirectory(outputDir);
+            // 弹出打印设置对话框 (复用原有逻辑)
+            // 注意：这里我们取第一组进行状态预估，仅作界面展示参考
+            var firstGroup = groupedFiles.First();
+            var candidates = PrepareCandidates(firstGroup.ToList()); // 提取出的辅助方法，见下文
 
-            // 加载历史记录 (用于判断版本状态)
-            PlotMetaManager.LoadHistory(outputDir);
-
-            // 4. 构建候选列表 (数据准备)
-            var candidates = new List<PlotCandidate>();
-            Mouse.OverrideCursor = Cursors.Wait;
-            try
-            {
-                foreach (var item in dwgFiles)
-                {
-                    string dwgName = item.Name;
-                    string pdfName = Path.GetFileNameWithoutExtension(dwgName) + ".pdf";
-
-                    // 1. 获取当前时间戳 (快速)
-                    string currentTimestamp = CadService.GetFileTimestamp(item.FullPath);
-
-                    // 2. 智能校验 (传入委托，按需读取 Tduupdate)
-                    bool isLatest = PlotMetaManager.CheckStatus(outputDir, pdfName, dwgName, currentTimestamp,
-                        () => CadService.GetContentFingerprint(item.FullPath)); // 委托
-
-                    candidates.Add(new PlotCandidate
-                    {
-                        FileName = dwgName,
-                        FilePath = item.FullPath,
-                        IsOutdated = !isLatest,       // 注意取反
-                        IsSelected = !isLatest,       // 默认勾选过期的
-                        NewTdUpdate = currentTimestamp, // 这里暂存时间戳
-                        VersionStatus = !isLatest ? "⚠️ 需更新" : "✅ 最新"
-                    });
-                }
-            }
-            finally
-            {
-                Mouse.OverrideCursor = null;
-            }
-
-            // 5. 【关键】弹出我们新建的 BatchPlotDialog
-            // 此时 CadAtlasManager.UI 命名空间下已经是新的 XAML 窗口了
             var dialog = new BatchPlotDialog(candidates);
-
-            // 如果用户点了取消，或者关闭了窗口，直接返回
             if (dialog.ShowDialog() != true) return;
 
-            // 6. 获取用户设置的参数
-            var config = dialog.FinalConfig;        // 打印机、纸张、样式等配置
-            var filesToPrint = dialog.ConfirmedFiles; // 用户最终勾选的文件
+            var config = dialog.FinalConfig;
+            var confirmedPaths = dialog.ConfirmedFiles; // 用户选中的完整路径列表
 
-            if (filesToPrint.Count == 0) return;
-
-            // 7. 开始批量打印循环
             int totalSuccess = 0;
             Mouse.OverrideCursor = Cursors.Wait;
 
             try
             {
-                foreach (var filePath in filesToPrint)
+                // --- 核心改造点 2：循环处理每个分组，动态计算输出路径 ---
+                foreach (var group in groupedFiles)
                 {
-                    // 【修改】获取生成的 PDF 列表 (List<string>)
-                    List<string> generatedPdfs = CadService.BatchPlotByTitleBlocks(filePath, outputDir, config);
+                    string sourceFolder = group.Key;
+                    // 目标路径：当前 DWG 文件夹下的 _Plot
+                    string targetPlotDir = Path.Combine(sourceFolder, "_Plot");
+                    if (!Directory.Exists(targetPlotDir)) Directory.CreateDirectory(targetPlotDir);
 
-                    if (generatedPdfs.Count > 0)
+                    // 针对当前文件夹加载历史记录，确保版本校验正常
+                    PlotMetaManager.LoadHistory(targetPlotDir);
+
+                    foreach (var dwg in group)
                     {
-                        // 打印成功，立即获取该 DWG 的最新指纹 (Tduupdate) 和 时间戳
-                        string freshFingerprint = CadService.GetContentFingerprint(filePath);
-                        string freshTime = CadService.GetFileTimestamp(filePath);
-                        string dwgName = Path.GetFileName(filePath); // 记录文件名即可，因为校验时有递归搜索
+                        if (!confirmedPaths.Contains(dwg.FullPath)) continue;
 
-                        // 【关键】为每一个生成的 PDF 都保存一条记录
-                        // 这样 Drawing1_1.pdf 也能关联到 Drawing1.dwg
-                        foreach (var pdfName in generatedPdfs)
+                        List<string> generatedPdfs = CadService.BatchPlotByTitleBlocks(dwg.FullPath, targetPlotDir, config);
+
+                        if (generatedPdfs.Count > 0)
                         {
-                            PlotMetaManager.SaveRecord(outputDir, pdfName, dwgName, freshFingerprint, freshTime);
+                            string freshFingerprint = CadService.GetContentFingerprint(dwg.FullPath);
+                            string freshTime = CadService.GetFileTimestamp(dwg.FullPath);
+                            foreach (var pdfName in generatedPdfs)
+                            {
+                                // 记录保存在各自文件夹下的 .cadatlas 目录中
+                                PlotMetaManager.SaveRecord(targetPlotDir, pdfName, dwg.Name, freshFingerprint, freshTime);
+                            }
+                            totalSuccess += generatedPdfs.Count;
                         }
-
-                        totalSuccess += generatedPdfs.Count;
                     }
                 }
-            }
-            catch (System.Exception ex)
-            {
-                MessageBox.Show($"批处理过程中发生意外错误:\n{ex.Message}");
             }
             finally
             {
                 Mouse.OverrideCursor = null;
+                RefreshPlotTree(); // 刷新归档树
             }
-
-            // 8. 刷新界面
-            RefreshPlotTree(); // 刷新输出目录树
-
-            string msg = $"批量打印完成！\n共处理文件: {filesToPrint.Count} 个\n生成 PDF 页数: {totalSuccess} 页";
-            MessageBox.Show(msg, "完成");
+            MessageBox.Show($"打印完成，共生成 {totalSuccess} 页 PDF。");
         }
+        // 辅助方法：准备候选列表（保留版本校验核心）
+        private List<PlotCandidate> PrepareCandidates(List<FileSystemItem> dwgs)
+        {
+            var list = new List<PlotCandidate>();
+            foreach (var item in dwgs)
+            {
+                string plotDir = Path.Combine(Path.GetDirectoryName(item.FullPath), "_Plot");
+                PlotMetaManager.LoadHistory(plotDir); // 加载局部的历史记录
 
+                string pdfName = Path.GetFileNameWithoutExtension(item.Name) + ".pdf";
+                string currentTimestamp = CadService.GetFileTimestamp(item.FullPath);
+
+                // 调用原有 PlotMetaManager 校验逻辑
+                bool isLatest = PlotMetaManager.CheckStatus(plotDir, pdfName, item.Name, currentTimestamp,
+                    () => CadService.GetContentFingerprint(item.FullPath));
+
+                list.Add(new PlotCandidate
+                {
+                    FileName = item.Name,
+                    FilePath = item.FullPath,
+                    IsOutdated = !isLatest,
+                    IsSelected = !isLatest,
+                    VersionStatus = !isLatest ? "⚠️ 需更新" : "✅ 最新"
+                });
+            }
+            return list;
+        }
+        // 3. 更新 UI 显示逻辑
+        private void UpdateVersionUi(FileSystemItem item, PdfStatus status)
+        {
+            switch (status)
+            {
+                case PdfStatus.Latest:
+                    item.VersionStatus = "✅ 最新"; item.StatusColor = Brushes.Green; break;
+                case PdfStatus.Expired:
+                    item.VersionStatus = "⚠️ 需更新"; item.StatusColor = Brushes.Red; break;
+                case PdfStatus.NeedRemerge:
+                    item.VersionStatus = "🔄 需重并"; item.StatusColor = Brushes.Orange; break;
+                case PdfStatus.MissingSource:
+                    item.VersionStatus = "❓ 源缺失"; item.StatusColor = Brushes.Gray; break;
+            }
+        }
+        // [添加到 AtlasView.xaml.cs]
+        private string FindDwgInProject(string basePath, string fileName)
+        {
+            if (string.IsNullOrEmpty(basePath) || string.IsNullOrEmpty(fileName)) return null;
+
+            try
+            {
+                // 确保文件名不含路径
+                string onlyName = Path.GetFileName(fileName);
+
+                // 在项目根目录下执行递归搜索
+                var foundFiles = Directory.GetFiles(basePath, onlyName, SearchOption.AllDirectories);
+
+                // 如果找到了，返回第一个匹配项的完整路径
+                return foundFiles.Length > 0 ? foundFiles[0] : null;
+            }
+            catch (Exception ex)
+            {
+                // 记录错误日志，防止搜索过程中因权限等问题崩溃
+                System.Diagnostics.Debug.WriteLine("搜索 DWG 文件出错: " + ex.Message);
+                return null;
+            }
+        }
         private void LoadPlotSubItems(FileSystemItem parent)
         {
             try
@@ -1252,34 +1198,86 @@ namespace CadAtlasManager
             }
         }
 
-        // =========================================================
-        // 【Phase 3 重构】智能递归版本校验
-        // =========================================================
-
+        // [修改方法：ValidatePdfVersion]
         private void ValidatePdfVersion(FileSystemItem item)
         {
-            // 调用核心逻辑获取状态
-            PdfStatus status = GetPdfStatusRecursive(item.Name);
+            // 关键点：从文件 FullPath 反推它所属的 _Plot 根目录
+            // 假设路径为 .../方案阶段/_Plot/Combined/xxx.pdf，我们需要获取 .../方案阶段/_Plot
+            string currentFileDir = Path.GetDirectoryName(item.FullPath);
+            string plotDir = "";
 
-            // 根据状态更新 UI
-            switch (status)
+            if (currentFileDir.EndsWith("_Plot", StringComparison.OrdinalIgnoreCase))
+                plotDir = currentFileDir;
+            else if (currentFileDir.Contains("_Plot"))
+                plotDir = item.FullPath.Substring(0, item.FullPath.IndexOf("_Plot") + 5);
+
+            if (string.IsNullOrEmpty(plotDir)) return;
+
+            // 调用核心递归逻辑时，传入当前确定的 plotDir
+            PdfStatus status = GetPdfStatusRecursive(item.Name, plotDir);
+
+            // 更新 UI (保持原逻辑不变)
+            UpdateVersionUi(item, status);
+        }
+
+        // [修改方法：GetPdfStatusRecursive]
+        // 2. 升级递归校验逻辑
+        private PdfStatus GetPdfStatusRecursive(string pdfName, string plotDir)
+        {
+            if (PlotMetaManager.IsCombinedFile(plotDir, pdfName))
             {
-                case PdfStatus.Latest:
-                    item.VersionStatus = "✅ 最新";
-                    item.StatusColor = Brushes.Green;
-                    break;
-                case PdfStatus.Expired:
-                    item.VersionStatus = "⚠️ 已过期";
-                    item.StatusColor = Brushes.Red;
-                    break;
-                case PdfStatus.MissingSource:
-                    item.VersionStatus = "❓ 源缺失";
-                    item.StatusColor = Brushes.Gray;
-                    break;
-                default:
-                    item.VersionStatus = ""; // 未知状态不显示
-                    break;
+                // 获取合并时记录的“指纹快照” (文件名:时间戳)
+                var snapshots = PlotMetaManager.GetCombinedSourcesWithSnapshot(plotDir, pdfName);
+                if (snapshots.Count == 0) return PdfStatus.Unknown;
+
+                foreach (var entry in snapshots)
+                {
+                    string sourcePdfName = entry.Key;
+                    string savedTimestamp = entry.Value;
+                    string sourcePdfPath = Path.Combine(plotDir, sourcePdfName);
+
+                    // A. 基础检查：文件是否还在磁盘上
+                    if (!File.Exists(sourcePdfPath)) return PdfStatus.MissingSource;
+
+                    // B. 时间认证（你的想法核心）：磁盘上的文件时间必须与合并时记录的时间一致
+                    string currentTimestamp = File.GetLastWriteTimeUtc(sourcePdfPath).Ticks.ToString();
+                    if (currentTimestamp != savedTimestamp)
+                    {
+                        // 虽然分项PDF可能是最新的，但它相对于合并文件来说是“新原材料”，需要重并
+                        return PdfStatus.NeedRemerge;
+                    }
+
+                    // C. 状态认证：分项 PDF 自身是否过期（递归检查它对应的 DWG）
+                    var subStatus = GetPdfStatusRecursive(sourcePdfName, plotDir);
+                    if (subStatus != PdfStatus.Latest) return subStatus;
+                }
+                return PdfStatus.Latest;
             }
+            else
+            {
+                return CheckSingleDwgStatus(pdfName, plotDir);
+            }
+        }
+
+        // [修改方法：CheckSingleDwgStatus]
+        private PdfStatus CheckSingleDwgStatus(string pdfName, string plotDir)
+        {
+            // 1. 在当前 plotDir 的历史记录中找 DWG 名字
+            PlotMetaManager.LoadHistory(plotDir);
+            string realDwgName = PlotMetaManager.GetSourceDwgName(plotDir, pdfName);
+
+            // ... 猜测名字逻辑 (同原代码) ...
+
+            // 2. 找 DWG 文件 (这一步仍建议在整个项目范围内递归搜，因为用户可能移动了 DWG 但没重印)
+            string sourceDwgPath = FindDwgInProject(_activeProject.Path, realDwgName);
+            if (string.IsNullOrEmpty(sourceDwgPath)) return PdfStatus.MissingSource;
+
+            // 3. 校验指纹
+            string currentTimestamp = CadService.GetFileTimestamp(sourceDwgPath);
+            bool isLatest = PlotMetaManager.CheckStatus(plotDir, pdfName, Path.GetFileName(sourceDwgPath), currentTimestamp,
+                () => CadService.GetContentFingerprint(sourceDwgPath));
+
+            return isLatest ? PdfStatus.Latest : PdfStatus.Expired;
         }
 
         // 递归核心逻辑
@@ -1355,6 +1353,28 @@ namespace CadAtlasManager
                 () => CadService.GetContentFingerprint(sourceDwgPath));
 
             return isLatest ? PdfStatus.Latest : PdfStatus.Expired;
+        }
+        // [添加到 AtlasView.xaml.cs]
+        private string GetCurrentPlotDir()
+        {
+            // 优先从右侧列表的第一个选中项推断路径
+            var item = PlotFileListItems.FirstOrDefault();
+            if (item == null)
+            {
+                // 如果列表为空，尝试从左侧树选中的节点推断
+                item = PlotFolderTree.SelectedItem as FileSystemItem;
+            }
+
+            if (item == null) return null;
+
+            // 向上寻找路径中包含 _Plot 的部分
+            string path = item.FullPath;
+            int idx = path.IndexOf("_Plot", StringComparison.OrdinalIgnoreCase);
+            if (idx != -1)
+            {
+                return path.Substring(0, idx + 5); // 截取到 .../_Plot
+            }
+            return null;
         }
 
         // =================================================================
