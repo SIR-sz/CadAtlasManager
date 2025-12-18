@@ -18,6 +18,10 @@
             <Setter Property="Margin" Value="0,0,0,12"/>
             <Setter Property="Padding" Value="4"/>
         </Style>
+        <Style x:Key="LeftAlignedHeaderStyle" TargetType="GridViewColumnHeader">
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="0"/>
+        </Style>
         <Style TargetType="TextBox">
             <Setter Property="Height" Value="28"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
@@ -128,17 +132,19 @@
             <ListView x:Name="LvFiles" Grid.Row="1" BorderThickness="1" BorderBrush="#DDD" Background="White">
                 <ListView.View>
                     <GridView>
-                        <GridViewColumn Width="40">
+                        <GridViewColumn Width="40" HeaderContainerStyle="{StaticResource LeftAlignedHeaderStyle}">
                             <GridViewColumn.Header>
-                                <Grid HorizontalAlignment="Center">
-                                    <CheckBox ToolTip="全选/反选" IsChecked="False" Click="HeaderCheckBox_Click"/>
-                                </Grid>
+                                <CheckBox ToolTip="全选/反选" 
+                  IsChecked="False" 
+                  Click="HeaderCheckBox_Click"
+                  VerticalAlignment="Center" 
+                  Margin="12,0,0,0"/>
                             </GridViewColumn.Header>
                             <GridViewColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Grid HorizontalAlignment="Center">
-                                        <CheckBox IsChecked="{Binding IsSelected}"/>
-                                    </Grid>
+                                    <CheckBox IsChecked="{Binding IsSelected}" 
+                      VerticalAlignment="Center" 
+                      Margin="6,0,0,0"/>
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>
