@@ -5,12 +5,11 @@ using System.Windows.Media;
 
 namespace CadAtlasManager.Models
 {
-    // 定义枚举
     public enum ExplorerItemType { Folder, File }
 
-    // 文件树节点模型
     public class FileSystemItem : INotifyPropertyChanged
     {
+        // ... [保留原有属性 Name, FullPath, Type, TypeIcon, IsRoot, FontWeight] ...
         public string Name { get; set; }
         public string FullPath { get; set; }
         public ExplorerItemType Type { get; set; }
@@ -18,6 +17,7 @@ namespace CadAtlasManager.Models
         public bool IsRoot { get; set; } = false;
         public FontWeight FontWeight { get; set; } = FontWeights.Normal;
 
+        // ... [保留 IsExpanded, IsItemSelected, HasRemark] ...
         private bool _isExpanded;
         public bool IsExpanded
         {
@@ -39,7 +39,18 @@ namespace CadAtlasManager.Models
             set { if (_hasRemark != value) { _hasRemark = value; OnPropertyChanged("HasRemark"); } }
         }
 
-        // 版本状态文字 (例如 "✅", "⚠️", "❓")
+        // --- 新增：复选框状态 ---
+        private bool _isChecked;
+        public bool IsChecked
+        {
+            get { return _isChecked; }
+            set { if (_isChecked != value) { _isChecked = value; OnPropertyChanged("IsChecked"); } }
+        }
+
+        // --- 新增：创建日期 ---
+        public string CreationDate { get; set; }
+
+        // ... [保留 VersionStatus, StatusColor 等] ...
         private string _versionStatus;
         public string VersionStatus
         {
@@ -47,7 +58,6 @@ namespace CadAtlasManager.Models
             set { if (_versionStatus != value) { _versionStatus = value; OnPropertyChanged("VersionStatus"); } }
         }
 
-        // 状态颜色 (用于文字变红/变绿)
         private Brush _statusColor = Brushes.Black;
         public Brush StatusColor
         {

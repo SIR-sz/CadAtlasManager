@@ -2,6 +2,9 @@
 using Autodesk.AutoCAD.ApplicationServices;
 using CadAtlasManager.Models;
 using CadAtlasManager.UI;
+// 添加这两个引用
+using PdfSharp.Pdf;
+using PdfSharp.Pdf.IO;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -25,9 +28,10 @@ namespace CadAtlasManager
     {
         public ObservableCollection<FileSystemItem> Items { get; set; }
         public ObservableCollection<FileSystemItem> ProjectTreeItems { get; set; }
-        public ObservableCollection<FileSystemItem> PlotTreeItems { get; set; }
+        public ObservableCollection<FileSystemItem> PlotFolderItems { get; set; }
         public ObservableCollection<ProjectItem> ProjectList { get; set; }
-
+        // 新增：PlotFileListItems 用于右侧列表
+        public ObservableCollection<FileSystemItem> PlotFileListItems { get; set; }
         private List<string> _loadedAtlasFolders = new List<string>();
         private ProjectItem _activeProject = null;
         private readonly string _versionInfo = "CAD图集管理器 v3.6 (Refactored)\n\n更新：\n1. 代码结构重构优化\n2. 准备接入新功能";
@@ -50,18 +54,317 @@ namespace CadAtlasManager
         {
             Items = new ObservableCollection<FileSystemItem>();
             ProjectTreeItems = new ObservableCollection<FileSystemItem>();
-            PlotTreeItems = new ObservableCollection<FileSystemItem>();
+            PlotFolderItems = new ObservableCollection<FileSystemItem>();
+            PlotFileListItems = new ObservableCollection<FileSystemItem>();
             ProjectList = new ObservableCollection<ProjectItem>();
 
             InitializeComponent();
 
             FileTree.ItemsSource = Items;
             ProjectTree.ItemsSource = ProjectTreeItems;
-            PlotTree.ItemsSource = PlotTreeItems;
-            CbProjects.ItemsSource = ProjectList;
 
+            // 修改绑定
+            PlotFolderTree.ItemsSource = PlotFolderItems;
+            PlotFileList.ItemsSource = PlotFileListItems;
+
+            CbProjects.ItemsSource = ProjectList;
             LoadConfig();
         }
+        private void RefreshPlotTree()
+        {
+            PlotFolderItems.Clear();
+            PlotFileListItems.Clear();
+
+            if (_activeProject == null) return;
+
+            // 1. 确保基础路径存在
+            if (string.IsNullOrEmpty(_activeProject.OutputPath))
+                _activeProject.OutputPath = Path.Combine(_activeProject.Path, "_Plot");
+
+            if (!Directory.Exists(_activeProject.OutputPath))
+            {
+                try { Directory.CreateDirectory(_activeProject.OutputPath); } catch { }
+            }
+            if (!Directory.Exists(_activeProject.OutputPath)) return;
+
+            // 2. 创建“成果 PDF”目录 (物理隔离，管理更清晰)
+            string combinedPath = Path.Combine(_activeProject.OutputPath, "Combined");
+            if (!Directory.Exists(combinedPath)) Directory.CreateDirectory(combinedPath);
+
+            // =========================================================
+            // 构建左侧树：两个固定节点
+            // =========================================================
+
+            // A. 节点：分项 PDF (对应 _Plot 根目录)
+            var itemSplit = CreateItem(_activeProject.OutputPath, ExplorerItemType.Folder, true);
+            itemSplit.Name = "📄 分项 PDF"; // 改名
+            itemSplit.TypeIcon = "📂";
+
+            // 加载子文件夹 (但要排除 Combined 文件夹，防止重复显示)
+            LoadPlotFoldersOnly(itemSplit, "Combined");
+            PlotFolderItems.Add(itemSplit);
+
+            // B. 节点：成果 PDF (对应 _Plot\Combined 子目录)
+            var itemCombined = CreateItem(combinedPath, ExplorerItemType.Folder, true);
+            itemCombined.Name = "📑 成果 PDF"; // 新增项
+            itemCombined.TypeIcon = "📚";
+
+            // 成果目录下通常不需要再分级，当然也可以加载
+            LoadPlotFoldersOnly(itemCombined);
+            PlotFolderItems.Add(itemCombined);
+
+            // =========================================================
+            // ✅ 自动加载逻辑
+            // =========================================================
+            // 默认展开“分项 PDF”并选中
+            itemSplit.IsExpanded = true;
+            itemSplit.IsItemSelected = true; // 设定 UI 选中状态
+
+            // 强制加载“分项 PDF”下的文件到右侧列表
+            LoadPlotFilesList(itemSplit);
+        }
+
+        // 修改方法签名，增加 excludeName 参数，默认由 null
+        private void LoadPlotFoldersOnly(FileSystemItem parent, string excludeName = null)
+        {
+            try
+            {
+                foreach (var dir in Directory.GetDirectories(parent.FullPath))
+                {
+                    var dirInfo = new DirectoryInfo(dir);
+
+                    // 跳过隐藏文件夹
+                    if (dirInfo.Attributes.HasFlag(FileAttributes.Hidden)) continue;
+
+                    // ✅ 新增过滤：如果文件夹名等于我们要排除的名字（比如 Combined），则跳过
+                    if (!string.IsNullOrEmpty(excludeName) &&
+                        dirInfo.Name.Equals(excludeName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var sub = CreateItem(dir, ExplorerItemType.Folder);
+                    LoadPlotFoldersOnly(sub); // 递归加载
+                    parent.Children.Add(sub);
+                }
+            }
+            catch { }
+        }
+
+        // 当左侧树选择变化时，加载右侧文件列表
+        private void PlotFolderTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            var folder = e.NewValue as FileSystemItem;
+            LoadPlotFilesList(folder);
+        }
+
+        private void LoadPlotFilesList(FileSystemItem folder)
+        {
+            PlotFileListItems.Clear();
+            if (folder == null || !Directory.Exists(folder.FullPath)) return;
+
+            try
+            {
+                // 加载该文件夹下的所有文件 (不递归)
+                foreach (var file in Directory.GetFiles(folder.FullPath))
+                {
+                    string ext = Path.GetExtension(file).ToLower();
+                    // 仅显示 PDF, 图片等
+                    if (".pdf.jpg.jpeg.png.plt".Contains(ext))
+                    {
+                        var item = CreateItem(file, ExplorerItemType.File);
+
+                        // 填充日期
+                        item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm");
+
+                        // 预先检查一下版本状态（如果是PDF）
+                        if (ext == ".pdf") ValidatePdfVersion(item);
+
+                        PlotFileListItems.Add(item);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // 全选/反选 按钮点击
+        private void OnSelectAllPlotFiles_Click(object sender, RoutedEventArgs e)
+        {
+            var cb = sender as CheckBox;
+            bool check = cb.IsChecked == true;
+            foreach (var item in PlotFileListItems)
+            {
+                item.IsChecked = check;
+            }
+        }
+
+        // 双击列表文件打开
+        private void PlotFileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (PlotFileList.SelectedItem is FileSystemItem item)
+            {
+                Process.Start(new ProcessStartInfo(item.FullPath) { UseShellExecute = true });
+            }
+        }
+
+        // 占位方法：删除
+        // =================================================================
+        // 【Phase 2 新增】删除与合并具体实现
+        // =================================================================
+
+        // 1. 删除功能
+        private void BtnDeletePlotFiles_Click(object sender, RoutedEventArgs e)
+        {
+            // 获取所有勾选的项目
+            var targets = PlotFileListItems.Where(i => i.IsChecked).ToList();
+
+            if (targets.Count == 0)
+            {
+                MessageBox.Show("请先在列表中勾选要删除的文件。", "提示");
+                return;
+            }
+
+            // 弹出确认框
+            var result = MessageBox.Show($"确定要永久删除这 {targets.Count} 个文件吗？\n此操作无法撤销。",
+                                         "删除确认", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+            if (result != MessageBoxResult.Yes) return;
+
+            int successCount = 0;
+            try
+            {
+                foreach (var item in targets)
+                {
+                    if (File.Exists(item.FullPath))
+                    {
+                        File.Delete(item.FullPath);
+
+                        // 同步删除备注
+                        RemarkManager.HandleDelete(item.FullPath);
+                        successCount++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"删除过程中发生错误：\n{ex.Message}", "错误");
+            }
+
+            // 刷新当前列表
+            // 获取当前选中的文件夹节点，重新加载它的内容
+            var currentFolder = GetSelectedItem();
+            if (currentFolder != null && currentFolder.Type == ExplorerItemType.Folder)
+            {
+                LoadPlotFilesList(currentFolder);
+            }
+            else
+            {
+                // 如果找不到当前节点，就刷新整个树
+                RefreshPlotTree();
+            }
+
+            if (successCount > 0)
+            {
+                // 可以在这里加个简单的提示，或者直接静默
+            }
+        }
+
+        // 2. 合并 PDF 功能
+        private void BtnMergePdf_Click(object sender, RoutedEventArgs e)
+        {
+            // 1. 获取勾选的 PDF 文件
+            // 注意：我们按照文件名排序，确保合并顺序符合直觉
+            var targets = PlotFileListItems
+                .Where(i => i.IsChecked && i.FullPath.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(i => i.Name)
+                .ToList();
+
+            if (targets.Count < 2)
+            {
+                MessageBox.Show("请至少勾选 2 个 PDF 文件进行合并。", "提示");
+                return;
+            }
+
+            // 2. 弹出重命名框 (复用已有的 RenameDialog)
+            // 默认文件名：取第一个文件的名字 + "_合并"
+            string defaultName = Path.GetFileNameWithoutExtension(targets[0].Name) + "_合并";
+            var dlg = new RenameDialog(defaultName);
+            dlg.Title = "合并 PDF - 输入新文件名";
+
+            if (dlg.ShowDialog() != true) return;
+
+            // 3. 确定保存路径
+            // 为了管理规范，我们将所有合并成果统一存放到 "Combined" 文件夹
+            string saveDir = Path.Combine(_activeProject.OutputPath, "Combined");
+            if (!Directory.Exists(saveDir)) Directory.CreateDirectory(saveDir);
+
+            string savePath = Path.Combine(saveDir, dlg.NewName + ".pdf");
+
+            // 检查重名
+            if (File.Exists(savePath))
+            {
+                if (MessageBox.Show($"文件 {dlg.NewName}.pdf 已存在，是否覆盖？", "覆盖确认",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                    return;
+            }
+
+            // 4. 执行合并
+            Mouse.OverrideCursor = Cursors.Wait;
+            try
+            {
+                // 收集源文件路径
+                List<string> sourceFiles = targets.Select(t => t.FullPath).ToList();
+
+                // 调用合并核心方法
+                MergePdfFiles(sourceFiles, savePath);
+
+                MessageBox.Show($"成功合并 {targets.Count} 个文件！\n已保存至：成果 PDF 目录", "成功");
+
+                // 5. 刷新界面
+                // 既然文件保存到了 "Combined" (成果 PDF)，我们应该刷新整个树，让用户能看到新文件
+                RefreshPlotTree();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"合并失败：\n{ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
+        // 3. PdfSharp 合并核心逻辑
+        private void MergePdfFiles(List<string> sourceFiles, string destFile)
+        {
+            // 创建一个新的 PDF 文档
+            using (PdfDocument outputDocument = new PdfDocument())
+            {
+                foreach (string file in sourceFiles)
+                {
+                    // 以导入模式打开文档
+                    using (PdfDocument inputDocument = PdfReader.Open(file, PdfDocumentOpenMode.Import))
+                    {
+                        // 遍历每一页并添加到输出文档
+                        int count = inputDocument.PageCount;
+                        for (int idx = 0; idx < count; idx++)
+                        {
+                            // 获取页
+                            PdfPage page = inputDocument.Pages[idx];
+                            // 添加到新文档
+                            outputDocument.AddPage(page);
+                        }
+                    }
+                }
+                // 保存
+                outputDocument.Save(destFile);
+            }
+
+            // TODO: (Phase 3) 这里未来将添加“版本校验”的元数据写入逻辑
+            // PlotMetaManager.SaveCombinedRecord(destFile, sourceFiles);
+        }
+        // ... [保留原有的 CreateItem, ValidatePdfVersion 等方法，
+        // 注意 ValidatePdfVersion 不需要改动，因为它操作的是 FileSystemItem 对象，
+        // 我们的 DataGrid 绑定的也是 FileSystemItem，所以状态更新会自动反映在表格中] ...
+
 
         // =================================================================
         // 【核心：备注面板动画与逻辑】
@@ -238,37 +541,6 @@ namespace CadAtlasManager
             catch { }
         }
 
-        // =========================================================
-        // 【模块 4】图纸工作台逻辑
-        // =========================================================
-        private void RefreshPlotTree()
-        {
-            PlotTreeItems.Clear();
-            if (_activeProject == null) return;
-
-            // 1. 确保有输出路径配置
-            if (string.IsNullOrEmpty(_activeProject.OutputPath))
-            {
-                _activeProject.OutputPath = Path.Combine(_activeProject.Path, "_Plot");
-            }
-
-            // 2. 自动创建 _Plot 文件夹
-            if (!Directory.Exists(_activeProject.OutputPath))
-            {
-                try { Directory.CreateDirectory(_activeProject.OutputPath); } catch { }
-            }
-
-            if (!Directory.Exists(_activeProject.OutputPath)) return;
-
-            // 3. 加载根节点
-            var root = CreateItem(_activeProject.OutputPath, ExplorerItemType.Folder, true);
-            root.Name = "🖨️ 输出归档 (_Plot)";
-            root.TypeIcon = "";
-
-            // 4. 加载内容
-            LoadPlotSubItems(root);
-            PlotTreeItems.Add(root);
-        }
 
         // =================================================================
         // 【重构】批量打印流程 (智能筛选 + 统一参数 + 防崩溃修复)
@@ -601,7 +873,8 @@ namespace CadAtlasManager
                     // (注意：这里不要加 !clickedItem.IsItemSelected 判断，否则单机已选项无法清除其他多选项)
                     ClearAllSelection(Items);
                     ClearAllSelection(ProjectTreeItems);
-                    ClearAllSelection(PlotTreeItems);
+                    ClearAllSelection(PlotFolderItems);
+                    foreach (var item in PlotFileListItems) item.IsChecked = false; // 清除列表勾选
 
                     clickedItem.IsItemSelected = true;
                     _lastSelectedItem = clickedItem;
@@ -783,14 +1056,47 @@ namespace CadAtlasManager
         private void BtnAddProject_Click(object sender, RoutedEventArgs e) { using (var d = new WinForms.FolderBrowserDialog()) { if (d.ShowDialog() == WinForms.DialogResult.OK && !ProjectList.Any(p => p.Path == d.SelectedPath)) { var p = new ProjectItem(Path.GetFileName(d.SelectedPath), d.SelectedPath); ProjectList.Add(p); CbProjects.SelectedItem = p; SaveConfig(); } } }
 
         private void ClearAllSelection(ObservableCollection<FileSystemItem> items) { if (items == null) return; foreach (var i in items) { i.IsItemSelected = false; ClearAllSelection(i.Children); } }
-        private List<FileSystemItem> GetAllSelectedItems() { var l = new List<FileSystemItem>(); CollectSelected(Items, l); CollectSelected(ProjectTreeItems, l); CollectSelected(PlotTreeItems, l); return l; }
+        private List<FileSystemItem> GetAllSelectedItems()
+        {
+            var l = new List<FileSystemItem>();
+            CollectSelected(Items, l);
+            CollectSelected(ProjectTreeItems, l);
+
+            // --- 修改开始 ---
+            CollectSelected(PlotFolderItems, l);   // 收集左侧树选中项
+
+            // 收集右侧列表的勾选项 (注意：列表用的是 IsChecked 属性，或者 DataGrid 的 SelectedItems，这里兼容处理)
+            // 假设我们主要依赖复选框 IsChecked
+            foreach (var item in PlotFileListItems)
+            {
+                if (item.IsChecked || item.IsItemSelected) l.Add(item);
+            }
+            // --- 修改结束 ---
+
+            return l;
+        }
         private void CollectSelected(ObservableCollection<FileSystemItem> s, List<FileSystemItem> r) { if (s == null) return; foreach (var i in s) { if (i.IsItemSelected) r.Add(i); CollectSelected(i.Children, r); } }
         private void SelectRange(ObservableCollection<FileSystemItem> root, FileSystemItem s, FileSystemItem e) { var l = new List<FileSystemItem>(); FlattenTree(root, l); int i1 = l.IndexOf(s), i2 = l.IndexOf(e); if (i1 != -1 && i2 != -1) for (int i = Math.Min(i1, i2); i <= Math.Max(i1, i2); i++) l[i].IsItemSelected = true; }
         private void FlattenTree(ObservableCollection<FileSystemItem> n, List<FileSystemItem> r) { foreach (var node in n) { r.Add(node); if (node.IsExpanded) FlattenTree(node.Children, r); } }
         private TreeViewItem GetTreeViewItemUnderMouse(DependencyObject e) { while (e != null && !(e is TreeViewItem)) e = VisualTreeHelper.GetParent(e); return e as TreeViewItem; }
         private void MenuItem_CopyInPlace_Click_Legacy(object sender, RoutedEventArgs e) { /* 保留旧逻辑引用防止报错，实际使用新的 CopyMove */ }
         private void MenuItem_Remove_Click(object sender, RoutedEventArgs e) { if (FileTree.SelectedItem is FileSystemItem i && i.IsRoot) { _loadedAtlasFolders.Remove(i.FullPath); Items.Remove(i); SaveConfig(); } }
-        private void BtnRemoveProject_Click(object sender, RoutedEventArgs e) { if (CbProjects.SelectedItem is ProjectItem p) { ProjectList.Remove(p); ProjectTreeItems.Clear(); PlotTreeItems.Clear(); _activeProject = null; SaveConfig(); } }
+        private void BtnRemoveProject_Click(object sender, RoutedEventArgs e)
+        {
+            if (CbProjects.SelectedItem is ProjectItem p)
+            {
+                ProjectList.Remove(p);
+                ProjectTreeItems.Clear();
+
+                // --- 修改开始 ---
+                PlotFolderItems.Clear();   // 清空文件夹树
+                PlotFileListItems.Clear(); // 清空文件列表
+                                           // --- 修改结束 ---
+
+                _activeProject = null;
+                SaveConfig();
+            }
+        }
         private void CbProjects_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CbProjects.SelectedItem is ProjectItem p)
@@ -821,14 +1127,15 @@ namespace CadAtlasManager
             string plotDir = _activeProject.OutputPath;
             if (string.IsNullOrEmpty(plotDir) || !Directory.Exists(plotDir)) return;
 
-            // 加载历史记录
             PlotMetaManager.LoadHistory(plotDir);
 
-            // 递归校验所有节点
-            Mouse.OverrideCursor = Cursors.Wait; // 显示忙碌光标
+            Mouse.OverrideCursor = Cursors.Wait;
             try
             {
-                CheckItemsVersion(PlotTreeItems);
+                // --- 修改开始 ---
+                // 只校验当前右侧列表中的文件
+                CheckItemsVersion(PlotFileListItems);
+                // --- 修改结束 ---
             }
             finally
             {
@@ -930,8 +1237,9 @@ namespace CadAtlasManager
         // =================================================================
         private void MenuItem_OpenSourceDwg_Click(object sender, RoutedEventArgs e)
         {
-            // 1. 获取选中的 PDF 文件
-            var item = PlotTree.SelectedItem as FileSystemItem;
+            // --- 修改开始 ---
+            // 从右侧列表获取选中项
+            var item = PlotFileList.SelectedItem as FileSystemItem;
             if (item == null || item.Type != ExplorerItemType.File || !item.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 MessageBox.Show("请先选择一个 PDF 文件。");
@@ -996,7 +1304,14 @@ namespace CadAtlasManager
         private FileSystemItem GetSelectedItem()
         {
             if (ProjectTree.IsVisible && ProjectTree.SelectedItem != null) return ProjectTree.SelectedItem as FileSystemItem;
-            if (PlotTree.IsVisible && PlotTree.SelectedItem != null) return PlotTree.SelectedItem as FileSystemItem;
+
+            // --- 修改开始 ---
+            // 优先检查右侧文件列表的选中项
+            if (PlotFileList.SelectedItem != null) return PlotFileList.SelectedItem as FileSystemItem;
+            // 其次检查左侧文件夹树的选中项
+            if (PlotFolderTree.SelectedItem != null) return PlotFolderTree.SelectedItem as FileSystemItem;
+            // --- 修改结束 ---
+
             if (_lastSelectedItem != null && _lastSelectedItem.IsItemSelected) return _lastSelectedItem;
             return FileTree.SelectedItem as FileSystemItem;
         }
@@ -1027,7 +1342,8 @@ namespace CadAtlasManager
                 // 2. 如果点击的项没被选中，则按标准流程：清除旧选择 -> 选中当前项
                 ClearAllSelection(Items);
                 ClearAllSelection(ProjectTreeItems);
-                ClearAllSelection(PlotTreeItems);
+                ClearAllSelection(PlotFolderItems);
+                foreach (var item in PlotFileListItems) item.IsChecked = false; // 清除列表勾选
 
                 clickedItem.IsItemSelected = true;
                 _lastSelectedItem = clickedItem;

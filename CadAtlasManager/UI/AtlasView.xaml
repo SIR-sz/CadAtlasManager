@@ -82,7 +82,7 @@
                     <ControlTemplate TargetType="TreeViewItem">
                         <Grid>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" MinWidth="19" />
+                                <ColumnDefinition Width="Auto" MinWidth="14" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
@@ -97,7 +97,7 @@
                                         <Setter Property="Template">
                                             <Setter.Value>
                                                 <ControlTemplate TargetType="ToggleButton">
-                                                    <TextBlock Text="▶" FontSize="10" Foreground="Gray" 
+                                                    <TextBlock Text="▶" FontSize="9" Foreground="#888" 
                                                                VerticalAlignment="Center" HorizontalAlignment="Center"
                                                                RenderTransformOrigin="0.5,0.5">
                                                         <TextBlock.RenderTransform>
@@ -111,16 +111,14 @@
                                 </ToggleButton.Style>
                             </ToggleButton>
                             <Border x:Name="Bd" 
-        Grid.Column="1" 
-        Padding="5,2" 
-        CornerRadius="2" 
-        BorderThickness="1" 
-        BorderBrush="Transparent">
-
+                                    Grid.Column="1" 
+                                    Padding="2,2" 
+                                    CornerRadius="2" 
+                                    BorderThickness="1" 
+                                    BorderBrush="Transparent">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Background" Value="Transparent"/>
-
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsItemSelected}" Value="True">
                                                 <Setter Property="Background" Value="#CCE8FF"/>
@@ -286,25 +284,82 @@
                         <StackPanel Orientation="Horizontal" Margin="0,5">
                             <Button Content="📂 打开输出目录" Click="BtnOpenPlotFolder_Click" Margin="0,0,5,0"/>
                             <Button Content="🔍 校验版本" Click="BtnCheckVersion_Click" Margin="0,0,5,0" ToolTip="检查图纸是否需要重新打印"/>
-                            <Button Content="🔄 刷新" Click="BtnRefreshPlot_Click"/>
+                            <Button Content="🔄 刷新" Click="BtnRefreshPlot_Click" Margin="0,0,20,0"/>
+
+                            <Button Content="🗑️ 删除" Click="BtnDeletePlotFiles_Click" Margin="0,0,5,0" Foreground="Red"/>
+                            <Button Content="📄+📄 合并PDF" Click="BtnMergePdf_Click" ToolTip="合并选中的PDF文件"/>
                         </StackPanel>
                     </StackPanel>
 
                     <Separator Grid.Row="1" Margin="0,10"/>
 
-                    <TextBlock Grid.Row="2" Text="已打印图纸 (PDF/图片)：" VerticalAlignment="Top" Foreground="Gray"/>
+                    <Grid Grid.Row="2" Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1.2*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="3*"/>
+                        </Grid.ColumnDefinitions>
 
-                    <TreeView Name="PlotTree" Grid.Row="2" Margin="0,25,0,0"
-                              ItemTemplate="{StaticResource FileSystemTemplate}"
-                              BorderThickness="1" BorderBrush="#eee" Background="White"
-                              MouseDoubleClick="PlotTree_MouseDoubleClick"
-                              PreviewMouseRightButtonDown="OnTreeItemRightClick">
-                        <TreeView.ItemContainerStyle>
-                            <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
-                                <Setter Property="ContextMenu" Value="{StaticResource PlotContextMenu}"/>
-                            </Style>
-                        </TreeView.ItemContainerStyle>
-                    </TreeView>
+                        <DockPanel Grid.Column="0">
+                            <TextBlock Text="📁 归档目录" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
+                            <TreeView Name="PlotFolderTree" 
+                                      ItemTemplate="{StaticResource FileSystemTemplate}"
+                                      SelectedItemChanged="PlotFolderTree_SelectedItemChanged"
+                                      BorderThickness="1" BorderBrush="#eee" Background="White">
+                                <TreeView.ItemContainerStyle>
+                                    <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                        <Setter Property="IsExpanded" Value="True"/>
+                                    </Style>
+                                </TreeView.ItemContainerStyle>
+                            </TreeView>
+                        </DockPanel>
+
+                        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Center" Background="Transparent"/>
+
+                        <DockPanel Grid.Column="2">
+                            <TextBlock Text="📄 文件列表" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
+                            <DataGrid Name="PlotFileList" AutoGenerateColumns="False" CanUserAddRows="False" 
+                                      GridLinesVisibility="Horizontal" Background="White" BorderBrush="#eee"
+                                      SelectionMode="Extended" MouseDoubleClick="PlotFileList_MouseDoubleClick">
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Width="40">
+                                        <DataGridTemplateColumn.HeaderTemplate>
+                                            <DataTemplate>
+                                                <CheckBox Click="OnSelectAllPlotFiles_Click" ToolTip="全选/反选"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.HeaderTemplate>
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+
+                                    <DataGridTextColumn Header="类型" Binding="{Binding TypeIcon}" IsReadOnly="True" Width="40"/>
+
+                                    <DataGridTextColumn Header="文件名称" Binding="{Binding Name}" IsReadOnly="True" Width="*">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="FontWeight" Value="{Binding FontWeight}"/>
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+
+                                    <DataGridTextColumn Header="版本状态" Binding="{Binding VersionStatus}" IsReadOnly="True" Width="100">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{Binding StatusColor}"/>
+                                                <Setter Property="FontWeight" Value="Bold"/>
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+
+                                    <DataGridTextColumn Header="创建日期" Binding="{Binding CreationDate}" IsReadOnly="True" Width="140"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Grid>
 
                     <TextBlock Grid.Row="3" Text="此处展示 _Plot 文件夹内的输出文件" Foreground="Gray" FontSize="10" HorizontalAlignment="Center" Margin="5"/>
                 </Grid>
