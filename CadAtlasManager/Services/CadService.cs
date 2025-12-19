@@ -162,7 +162,9 @@ namespace CadAtlasManager
                         {
                             var tb = titleBlocks[i];
                             string fileName = Path.GetFileNameWithoutExtension(dwgPath);
-                            if (titleBlocks.Count > 1) fileName += $"_{i + 1}";
+                            // 修改处：使用 :D2 格式化字符串，强制输出两位数，不足两位补0
+                            if (titleBlocks.Count > 1)
+                                fileName += $"_{(i + 1):D2}"; // 结果将变为 _01, _02, ... _10, _11
                             string fullPdfPath = Path.Combine(outputDir, fileName + ".pdf");
 
                             if (PlotFactory.ProcessPlotState == ProcessPlotState.NotPlotting)

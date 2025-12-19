@@ -323,24 +323,29 @@
                             <DataGrid Name="PlotFileList" AutoGenerateColumns="False" CanUserAddRows="False" 
                                       GridLinesVisibility="Horizontal" Background="White" BorderBrush="#eee"
                                       SelectionMode="Extended" MouseDoubleClick="PlotFileList_MouseDoubleClick">
+                                <DataGrid.ItemContainerStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="IsSelected" Value="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                                    </Style>
+                                </DataGrid.ItemContainerStyle>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Width="40">
                                         <DataGridTemplateColumn.HeaderTemplate>
                                             <DataTemplate>
                                                 <CheckBox Click="OnSelectAllPlotFiles_Click" 
-                      ToolTip="全选/反选" 
-                      HorizontalAlignment="Left" 
-                      VerticalAlignment="Center" 
-                      Margin="6,0,0,0"/>
+                                                          ToolTip="全选/反选" 
+                                                          HorizontalAlignment="Left" 
+                                                          VerticalAlignment="Center" 
+                                                          Margin="6,0,0,0"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.HeaderTemplate>
 
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" 
-                      HorizontalAlignment="Left" 
-                      VerticalAlignment="Center"
-                      Margin="10,0,0,0"/>
+                                                      HorizontalAlignment="Left" 
+                                                      VerticalAlignment="Center"
+                                                      Margin="10,0,0,0"/>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
