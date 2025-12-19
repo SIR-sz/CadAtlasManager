@@ -813,6 +813,123 @@ namespace CadAtlasManager
             MessageBox.Show($"打印完成，共生成 {totalSuccess} 页 PDF。");
 
         }
+
+        // [添加至类: UI/AtlasView.xaml.cs]
+
+        private void BtnBatchPlotFromPlot_Click(object sender, RoutedEventArgs e)
+        {
+            if (_activeProject == null) return;
+
+            // 1. 获取图纸列表中勾选或选中的 PDF 项
+            var selectedPdfs = PlotFileListItems.Where(i => i.IsChecked || i.IsItemSelected)
+                .Where(i => i.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (selectedPdfs.Count == 0)
+            {
+                MessageBox.Show("请先在列表中勾选或选择需要重印的 PDF 文件。", "提示");
+                return;
+            }
+
+            // 2. 转换：寻找每个 PDF 对应的源 DWG 文件对象
+            var dwgItemsForPlot = new List<FileSystemItem>();
+            var missingDwgs = new List<string>();
+
+            foreach (var pdf in selectedPdfs)
+            {
+                // 排除合并文件（合并文件无法直接重印，需要更新分项后再合并）
+                string plotDir = GetCurrentPlotDir();
+                if (PlotMetaManager.IsCombinedFile(plotDir, pdf.Name)) continue;
+
+                // 查找源 DWG 路径 (复用之前的查找逻辑)
+                string realDwgName = PlotMetaManager.GetSourceDwgName(plotDir, pdf.Name);
+                if (string.IsNullOrEmpty(realDwgName))
+                {
+                    string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(pdf.Name), @"_\d+$", "");
+                    realDwgName = baseName + ".dwg";
+                }
+
+                string dwgPath = FindDwgInProject(_activeProject.Path, realDwgName);
+
+                if (!string.IsNullOrEmpty(dwgPath) && File.Exists(dwgPath))
+                {
+                    // 创建一个临时的 FileSystemItem 用于传递给打印准备函数
+                    if (!dwgItemsForPlot.Any(i => i.FullPath.Equals(dwgPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        dwgItemsForPlot.Add(CreateItem(dwgPath, ExplorerItemType.File));
+                    }
+                }
+                else
+                {
+                    missingDwgs.Add(pdf.Name);
+                }
+            }
+
+            if (dwgItemsForPlot.Count == 0)
+            {
+                MessageBox.Show("未找到选中 PDF 对应的源 DWG 文件，无法重印。", "提示");
+                return;
+            }
+
+            // 3. 调起打印对话框
+            var candidates = PrepareCandidates(dwgItemsForPlot);
+            var dialog = new BatchPlotDialog(candidates) { Title = "图纸重印 - 批量打印设置" };
+
+            if (dialog.ShowDialog() != true) return;
+
+            // 4. 执行打印逻辑 (直接复用 MenuItem_BatchPlot_Click 中的核心打印部分)
+            ExecuteBatchPlotProcess(dwgItemsForPlot, dialog.FinalConfig, dialog.ConfirmedFiles);
+        }
+
+        // 提取出的通用打印执行流程，方便复用
+        private void ExecuteBatchPlotProcess(List<FileSystemItem> dwgFiles, BatchPlotConfig config, List<string> confirmedPaths)
+        {
+            int totalSuccess = 0;
+            Mouse.OverrideCursor = Cursors.Wait;
+
+            try
+            {
+                var groupedFiles = dwgFiles.GroupBy(f => Path.GetDirectoryName(f.FullPath));
+
+                foreach (var group in groupedFiles)
+                {
+                    string sourceFolder = group.Key;
+                    string targetPlotDir = Path.Combine(sourceFolder, "_Plot");
+                    if (!Directory.Exists(targetPlotDir)) Directory.CreateDirectory(targetPlotDir);
+
+                    PlotMetaManager.LoadHistory(targetPlotDir);
+
+                    foreach (var dwg in group)
+                    {
+                        if (!confirmedPaths.Contains(dwg.FullPath)) continue;
+
+                        // 执行打印
+                        List<string> generatedPdfs = CadService.BatchPlotByTitleBlocks(dwg.FullPath, targetPlotDir, config);
+
+                        if (generatedPdfs.Count > 0)
+                        {
+                            string freshFingerprint = CadService.GetContentFingerprint(dwg.FullPath);
+                            string freshTime = CadService.GetFileTimestamp(dwg.FullPath);
+                            foreach (var pdfName in generatedPdfs)
+                            {
+                                PlotMetaManager.SaveRecord(targetPlotDir, pdfName, dwg.Name, freshFingerprint, freshTime);
+                            }
+                            totalSuccess += generatedPdfs.Count;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("重印过程中出错: " + ex.Message);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                RefreshPlotTree(); // 刷新归档树以显示最新状态
+                MessageBox.Show($"打印完成，共更新 {totalSuccess} 页图纸。");
+            }
+        }
         // 辅助方法：准备候选列表（保留版本校验核心）
         private List<PlotCandidate> PrepareCandidates(List<FileSystemItem> dwgs)
         {
@@ -904,6 +1021,7 @@ namespace CadAtlasManager
             }
             catch { }
         }
+
 
         // 统一创建对象的方法，处理备注状态
         private FileSystemItem CreateItem(string path, ExplorerItemType type, bool isRoot = false)
