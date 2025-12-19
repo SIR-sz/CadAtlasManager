@@ -779,29 +779,22 @@ namespace CadAtlasManager
         // [AtlasView.xaml.cs] 完整的方法实现
         private void MenuItem_BatchPlot_Click(object sender, RoutedEventArgs e)
         {
-            if (_activeProject == null) { MessageBox.Show("请先选择一个项目。"); return; }
-
-            // 1. 获取选中的 DWG 文件 (修复 dwgFiles 缺失)
-            var selectedItems = GetAllSelectedItems();
-            if (selectedItems.Count == 0 && GetSelectedItem() != null) selectedItems.Add(GetSelectedItem());
-
-            var dwgFiles = selectedItems
+            // 获取选中的 DWG 文件列表
+            var selectedDwgs = GetAllSelectedItems()
                 .Where(i => i.Type == ExplorerItemType.File && i.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            if (dwgFiles.Count == 0) return;
+            if (selectedDwgs.Count == 0) return;
 
-            // 2. 准备候选列表并弹出设置对话框 (修复 dialog 缺失)
-            var candidates = PrepareCandidates(dwgFiles);
+            // 转换模型并弹出对话框
+            var candidates = selectedDwgs.Select(d => new PlotCandidate
+            {
+                FilePath = d.FullPath, // 这里赋值给模型的 FilePath
+                FileName = System.IO.Path.GetFileName(d.FullPath)
+            }).ToList();
+
             var dialog = new BatchPlotDialog(candidates);
-
-            if (dialog.ShowDialog() != true) return;
-
-            // 3. 执行混合打印流程
-            var config = dialog.FinalConfig;
-            var confirmedDwgs = dwgFiles.Where(d => dialog.ConfirmedFiles.Contains(d.FullPath)).ToList();
-
-            ExecuteHybridPlotWorkflow(confirmedDwgs, config);
+            dialog.ShowDialog();
         }
 
         private void ExecuteHybridPlotWorkflow(List<FileSystemItem> dwgs, BatchPlotConfig config)

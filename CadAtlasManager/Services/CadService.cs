@@ -1,6 +1,5 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
-using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.PlottingServices;
 using Autodesk.AutoCAD.Runtime;
@@ -10,7 +9,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 // 给 AutoCAD 的 Application 起个别名，防止和 WPF 冲突
-using AcApp = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace CadAtlasManager
 {
@@ -88,6 +86,21 @@ namespace CadAtlasManager
             try { acDocMgr.Open(finalOpenPath, isReadOnly); }
             catch (System.Exception ex) { System.Windows.MessageBox.Show($"CAD 无法打开文件:\n{ex.Message}"); }
         }
+        public static int OpenAndManualPlot(string dwgPath, BatchPlotConfig config)
+        {
+            // 1. 打开并激活文档
+            Document doc = Application.DocumentManager.Open(dwgPath, false);
+            Application.DocumentManager.MdiActiveDocument = doc;
+
+            // 2. 调用之前写好的 ManualPickAndPlot
+            // 它会循环提示用户框选，并使用传入的 config（包含用户刚才在UI改的参数）
+            string targetDir = Path.Combine(Path.GetDirectoryName(dwgPath), "_Plot");
+            int count = ManualPickAndPlot(doc, targetDir, config);
+
+            // 3. 完成后关闭
+            doc.CloseAndDiscard();
+            return count;
+        }
 
         // --- 打印辅助方法 ---
         public static List<string> GetPlotters()
@@ -119,88 +132,77 @@ namespace CadAtlasManager
             public Extents3d Extents;
         }
 
-        // --- 批量打印核心 ---
-        // 修改：返回 List<string> 包含所有生成的 PDF 文件名
-        // [CadService.cs] 修改后的 BatchPlotByTitleBlocks
+        /// <summary>
+        // [CadService.cs]
         public static List<string> BatchPlotByTitleBlocks(string dwgPath, string outputDir, BatchPlotConfig config)
         {
             List<string> generatedFiles = new List<string>();
-            Document doc = null;
+            Autodesk.AutoCAD.ApplicationServices.Document doc = null;
             bool isOpenedByUs = false;
+            var docMgr = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager;
 
             try
             {
-                // 1. 获取文档逻辑保持不变
-                foreach (Document d in Application.DocumentManager)
+                foreach (Autodesk.AutoCAD.ApplicationServices.Document d in docMgr)
                 {
                     if (d.Name.Equals(dwgPath, StringComparison.OrdinalIgnoreCase)) { doc = d; break; }
                 }
+
                 if (doc == null)
                 {
                     if (File.Exists(dwgPath))
                     {
-                        doc = Application.DocumentManager.Open(dwgPath, false);
+                        doc = docMgr.Open(dwgPath, false);
                         isOpenedByUs = true;
                     }
                     else return generatedFiles;
                 }
 
-                // 2. 锁定文档并在正确的上下文中执行
                 using (doc.LockDocument())
                 {
                     Database db = doc.Database;
-                    List<string> blockNames = config.TitleBlockNames.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToList();
+                    var blockNames = config.TitleBlockNames?.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries)
+                                                           .Select(s => s.Trim()).ToList() ?? new List<string>();
 
                     using (Transaction tr = db.TransactionManager.StartTransaction())
                     {
                         ObjectId targetSpaceId = db.CurrentSpaceId;
                         var targetLayout = GetLayoutFromBtrId(tr, db, targetSpaceId);
+                        if (targetLayout == null) return generatedFiles;
 
-                        var titleBlocks = ScanTitleBlocks(tr, targetSpaceId, blockNames);
-                        if (titleBlocks.Count == 0) return generatedFiles;
+                        var rawBlocks = ScanTitleBlocks(tr, targetSpaceId, blockNames);
+                        if (rawBlocks.Count == 0) return generatedFiles;
 
-                        titleBlocks = SortTitleBlocks(titleBlocks, config.OrderType);
+                        var titleBlocks = SortTitleBlocks(rawBlocks, config.OrderType);
 
-                        // 核心改动：将 PlotEngine 移出循环或确保其生命周期极其严格
-                        foreach (var tb in titleBlocks)
+                        for (int i = 0; i < titleBlocks.Count; i++)
                         {
-                            int index = titleBlocks.IndexOf(tb) + 1;
-                            string fileName = Path.GetFileNameWithoutExtension(dwgPath) + (titleBlocks.Count > 1 ? $"_{index:D2}" : "");
+                            var tb = titleBlocks[i];
+                            string fileName = Path.GetFileNameWithoutExtension(dwgPath);
+
+                            // 命名规则：如果有多张图则添加 _01, _02 这种后缀
+                            if (titleBlocks.Count > 1)
+                                fileName += $"_{(i + 1):D2}";
+
                             string fullPdfPath = Path.Combine(outputDir, fileName + ".pdf");
 
-                            // 检查打印机状态
-                            if (PlotFactory.ProcessPlotState != ProcessPlotState.NotPlotting) continue;
-
-                            // 使用 IDisposable 包装所有打印对象
-                            using (PlotInfo plotInfo = BuildPlotInfo(tr, targetLayout, tb, config, db))
+                            if (PlotFactory.ProcessPlotState == ProcessPlotState.NotPlotting)
                             {
-                                using (PlotInfoValidator validator = new PlotInfoValidator())
+                                if (PrintExtent(doc, targetLayout, tb, config, fullPdfPath))
                                 {
-                                    validator.MediaMatchingPolicy = MatchingPolicy.MatchEnabled;
-                                    validator.Validate(plotInfo);
-
-                                    using (PlotEngine engine = PlotFactory.CreatePublishEngine())
-                                    {
-                                        engine.BeginPlot(null, null);
-                                        engine.BeginDocument(plotInfo, doc.Name, null, 1, true, fullPdfPath);
-                                        engine.BeginPage(new PlotPageInfo(), plotInfo, true, null);
-                                        engine.BeginGenerateGraphics(null);
-                                        engine.EndGenerateGraphics(null);
-                                        engine.EndPage(null);
-                                        engine.EndDocument(null);
-                                        engine.EndPlot(null); // 必须在 engine 销毁前调用
-                                    }
+                                    generatedFiles.Add(fileName + ".pdf");
+                                    PlotMetaManager.SavePlotRecord(dwgPath, fullPdfPath);
                                 }
-                                generatedFiles.Add(fileName + ".pdf");
                             }
                         }
-                        tr.Commit(); // 必须提交事务
+                        // 修正：删除了原代码中错误的 result.IsSuccess = true 等行，直接提交事务
+                        tr.Commit();
                     }
                 }
             }
             catch (System.Exception ex)
             {
-                System.Windows.MessageBox.Show($"打印核心崩溃: {ex.Message}");
+                throw new System.Exception($"文件 {Path.GetFileName(dwgPath)} 批量打印核心崩溃: {ex.Message}", ex);
             }
             finally
             {
@@ -370,6 +372,9 @@ namespace CadAtlasManager
             catch { return false; }
         }
         // [CadService.cs]
+        /// <summary>
+        /// 增强版批量打印：返回带状态的结果对象 (用于 UI 反馈)
+        /// </summary>
         public static PlotFileResult EnhancedBatchPlot(string dwgPath, string outputDir, BatchPlotConfig config)
         {
             var result = new PlotFileResult { FilePath = dwgPath, FileName = Path.GetFileName(dwgPath) };
@@ -385,53 +390,32 @@ namespace CadAtlasManager
 
             try
             {
-                // 核心修复：使用 AcApp 明确指定 AutoCAD 的 DocumentManager
-                var docMgr = AcApp.DocumentManager;
-
-                // 1. 检查文档是否已经在 CAD 中打开
+                var docMgr = Application.DocumentManager;
                 foreach (Document d in docMgr)
                 {
-                    if (d.Name.Equals(dwgPath, StringComparison.OrdinalIgnoreCase))
-                    {
-                        doc = d;
-                        break;
-                    }
+                    if (d.Name.Equals(dwgPath, StringComparison.OrdinalIgnoreCase)) { doc = d; break; }
                 }
 
-                // 2. 如果没打开，尝试静默打开
                 if (doc == null)
                 {
                     if (File.Exists(dwgPath))
                     {
-                        doc = docMgr.Open(dwgPath, false); // false 表示不只读，方便打印
+                        doc = docMgr.Open(dwgPath, false);
                         isOpenedByUs = true;
-                    }
-                    else
-                    {
-                        result.IsSuccess = false;
-                        result.ErrorMessage = "DWG文件不存在";
-                        return result;
                     }
                 }
 
-                // 3. 安全检查：如果还是 null，说明打开失败
                 if (doc == null)
                 {
                     result.IsSuccess = false;
-                    result.ErrorMessage = "无法获取 CAD 文档对象";
+                    result.ErrorMessage = "无法获取 CAD 文档";
                     return result;
                 }
 
-                // 执行打印流程
                 using (doc.LockDocument())
                 {
-                    // 确保该文档是当前活动文档
-                    if (docMgr.MdiActiveDocument != doc)
-                        docMgr.MdiActiveDocument = doc;
-
                     Database db = doc.Database;
-                    var blockNames = config.TitleBlockNames.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries)
-                                                           .Select(s => s.Trim()).ToList();
+                    var blockNames = config.TitleBlockNames.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToList();
 
                     using (Transaction tr = db.TransactionManager.StartTransaction())
                     {
@@ -447,16 +431,18 @@ namespace CadAtlasManager
                         }
 
                         titleBlocks = SortTitleBlocks(titleBlocks, config.OrderType);
+
                         for (int i = 0; i < titleBlocks.Count; i++)
                         {
                             string fileName = Path.GetFileNameWithoutExtension(dwgPath);
                             if (titleBlocks.Count > 1) fileName += $"_{(i + 1):D2}";
                             string fullPdfPath = Path.Combine(outputDir, fileName + ".pdf");
 
-                            // 调用打印逻辑
                             if (PrintExtent(doc, layout, titleBlocks[i], config, fullPdfPath))
                             {
+                                // 修正：此处应添加到 result 对象的列表中
                                 result.GeneratedPdfs.Add(fileName + ".pdf");
+                                PlotMetaManager.SavePlotRecord(dwgPath, fullPdfPath);
                             }
                         }
                         result.IsSuccess = true;
@@ -465,48 +451,42 @@ namespace CadAtlasManager
                     }
                 }
             }
-            catch (System.Exception ex) // 明确使用 System.Exception
+            catch (System.Exception ex)
             {
                 result.IsSuccess = false;
                 result.ErrorMessage = "异常: " + ex.Message;
             }
             finally
             {
-                // 如果是我们打开的文档，打印完关掉
-                if (isOpenedByUs && doc != null)
-                {
-                    doc.CloseAndDiscard();
-                }
+                if (isOpenedByUs && doc != null) doc.CloseAndDiscard();
             }
             return result;
         }
+        // [CadService.cs]
+        // [CadService.cs]
+        // [CadService.cs]
         // [CadService.cs]
         public static int ManualPickAndPlot(Document doc, string outputDir, BatchPlotConfig config)
         {
             var ed = doc.Editor;
             int successCount = 0;
-
-            // 确保 CAD 窗口获得焦点
-            Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument = doc;
-            doc.Window.Focus();
+            string dwgPath = doc.Name;
 
             using (doc.LockDocument())
             {
                 using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
                     var layout = GetLayoutFromBtrId(tr, doc.Database, doc.Database.CurrentSpaceId);
+                    if (layout == null) return 0;
 
                     while (true)
                     {
-                        // 1. 拾取第一个点
-                        var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [直接按回车退出]: ");
-                        if (ppr1.Status != PromptStatus.OK) break;
+                        var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [回车结束]: ");
+                        if (ppr1.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK) break;
 
-                        // 2. 拾取第二个角点（带矩形框预览）
                         var ppr2 = ed.GetCorner("\n指定第二个角点: ", ppr1.Value);
-                        if (ppr2.Status != PromptStatus.OK) break;
+                        if (ppr2.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK) break;
 
-                        // 3. 构造虚拟图框范围
                         var tb = new TitleBlockInfo
                         {
                             Extents = new Extents3d(
@@ -515,14 +495,19 @@ namespace CadAtlasManager
                             )
                         };
 
-                        // 4. 执行打印
-                        string pdfName = $"{Path.GetFileNameWithoutExtension(doc.Name)}_手动_{(successCount + 1):D2}.pdf";
-                        if (PrintExtent(doc, layout, tb, config, Path.Combine(outputDir, pdfName)))
+                        // 修改处：移除“_手动_”字样，保持与批量打印一致的命名规则
+                        string dwgFileName = Path.GetFileNameWithoutExtension(dwgPath);
+                        string pdfName = $"{dwgFileName}_{(successCount + 1):D2}.pdf";
+                        string fullPdfPath = Path.Combine(outputDir, pdfName);
+
+                        if (PrintExtent(doc, layout, tb, config, fullPdfPath))
                         {
                             successCount++;
-                            ed.WriteMessage($"\n已生成第 {successCount} 页手动打印。");
+                            // 保存元数据关联，确保图纸工作台不丢失源文件
+                            PlotMetaManager.SavePlotRecord(dwgPath, fullPdfPath);
                         }
                     }
+                    tr.Commit();
                 }
             }
             return successCount;

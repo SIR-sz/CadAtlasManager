@@ -17,7 +17,22 @@ namespace CadAtlasManager
         // 这样可以同时管理多个 _Plot 文件夹的元数据而不会冲突
         private static Dictionary<string, Dictionary<string, string>> _folderCaches =
             new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        // 在 PlotMetaManager 类内部添加此方法
+        public static void SavePlotRecord(string dwgPath, string fullPdfPath)
+        {
+            if (string.IsNullOrEmpty(dwgPath) || string.IsNullOrEmpty(fullPdfPath)) return;
 
+            string plotFolder = Path.GetDirectoryName(fullPdfPath);
+            string pdfName = Path.GetFileName(fullPdfPath);
+            string dwgName = Path.GetFileName(dwgPath);
+
+            // 获取指纹和时间戳
+            string fingerprint = CadService.GetContentFingerprint(dwgPath);
+            string timestamp = CadService.GetFileTimestamp(dwgPath);
+
+            // 保存记录
+            SaveRecord(plotFolder, pdfName, dwgName, fingerprint, timestamp);
+        }
         /// <summary>
         /// 加载指定目录的历史记录
         /// </summary>

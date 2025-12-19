@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="批量打印设置 (Pro)" Height="600" Width="900" 
+        Title="批量打印设置 (Pro)" Height="650" Width="950" 
         WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
         Background="#F5F5F5">
 
@@ -13,23 +13,39 @@
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Foreground" Value="#333"/>
         </Style>
+
+        <Style x:Key="StatusTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="Gray"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSuccess}" Value="True">
+                    <Setter Property="Foreground" Value="Green"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsSuccess}" Value="False">
+                    <Setter Property="Foreground" Value="Red"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ManualButtonStyle" TargetType="Button">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsSuccess}" Value="False">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style TargetType="ComboBox">
             <Setter Property="Height" Value="28"/>
             <Setter Property="Margin" Value="0,0,0,12"/>
             <Setter Property="Padding" Value="4"/>
         </Style>
+
         <Style x:Key="LeftAlignedHeaderStyle" TargetType="GridViewColumnHeader">
             <Setter Property="HorizontalContentAlignment" Value="Left"/>
-            <Setter Property="Padding" Value="0"/>
-        </Style>
-        <Style TargetType="TextBox">
-            <Setter Property="Height" Value="28"/>
-            <Setter Property="VerticalContentAlignment" Value="Center"/>
-            <Setter Property="Padding" Value="2"/>
-        </Style>
-        <Style TargetType="CheckBox">
-            <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Padding" Value="5,0"/>
         </Style>
     </Window.Resources>
 
@@ -41,10 +57,10 @@
         </Grid.ColumnDefinitions>
 
         <Border Grid.Column="0" Background="White" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" Padding="15">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,5,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel>
                     <TextBlock Text="🖨️ 打印机 / 绘图仪" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <ComboBox x:Name="CbPrinters" SelectionChanged="CbPrinters_SelectionChanged"/>
+                    <ComboBox x:Name="CbPrinters" SelectionChanged="CbPrinters_SelectionChanged" Margin="0,0,0,12"/>
 
                     <GroupBox Header="打印顺序" Margin="0,5">
                         <StackPanel Orientation="Horizontal" Margin="5">
@@ -54,7 +70,7 @@
                     </GroupBox>
 
                     <GroupBox Header="比例与偏移" Margin="0,5">
-                        <Grid>
+                        <Grid Margin="5">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
@@ -68,52 +84,39 @@
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
 
-                            <TextBlock Text="模式:" VerticalAlignment="Center" Margin="5"/>
-                            <CheckBox Name="ChkFitToPaper" Grid.Column="1" Grid.ColumnSpan="3" Content="布满图纸" 
-                                      IsChecked="False" Margin="2,8" Checked="ChkFitToPaper_CheckedChanged" Unchecked="ChkFitToPaper_CheckedChanged"/>
+                            <TextBlock Text="模式:" Grid.Row="0" Margin="0,5"/>
+                            <CheckBox Name="ChkFitToPaper" Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3" Content="布满图纸" 
+                                      VerticalAlignment="Center" Margin="5,0"
+                                      Checked="ChkFitToPaper_CheckedChanged" Unchecked="ChkFitToPaper_CheckedChanged"/>
 
-                            <TextBlock Text="比例:" Grid.Row="1" VerticalAlignment="Center" Margin="5"/>
-                            <ComboBox Name="CbScale" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Margin="2,2,2,8" 
-                                      IsEditable="True" IsEnabled="True">
-                                <ComboBoxItem Content="1:1"/>
-                                <ComboBoxItem Content="1:2"/>
-                                <ComboBoxItem Content="1:4"/>
-                                <ComboBoxItem Content="1:5"/>
-                                <ComboBoxItem Content="1:8"/>
-                                <ComboBoxItem Content="1:10"/>
-                                <ComboBoxItem Content="1:20"/>
-                                <ComboBoxItem Content="1:50"/>
-                                <ComboBoxItem Content="1:100"/>
-                                <ComboBoxItem Content="1:200"/>
-                                <ComboBoxItem Content="1:500"/>
-                            </ComboBox>
+                            <TextBlock Text="比例:" Grid.Row="1" Margin="0,5"/>
+                            <ComboBox Name="CbScale" Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" IsEditable="True" Margin="5,2"/>
 
-                            <TextBlock Text="偏移 X:" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="5"/>
-                            <TextBox Name="TbOffsetX" Grid.Row="2" Grid.Column="1" Text="0" Margin="2" IsEnabled="False"/>
+                            <TextBlock Text="偏移X:" Grid.Row="2" Margin="0,5"/>
+                            <TextBox Name="TbOffsetX" Grid.Row="2" Grid.Column="1" Text="0" Margin="5,2" Height="24"/>
 
-                            <TextBlock Text="偏移 Y:" Grid.Row="2" Grid.Column="2" VerticalAlignment="Center" Margin="5"/>
-                            <TextBox Name="TbOffsetY" Grid.Row="2" Grid.Column="3" Text="0" Margin="2" IsEnabled="False"/>
+                            <TextBlock Text="偏移Y:" Grid.Row="2" Grid.Column="2" Margin="5,5"/>
+                            <TextBox Name="TbOffsetY" Grid.Row="2" Grid.Column="3" Text="0" Margin="5,2" Height="24"/>
 
                             <CheckBox Name="ChkCenterPlot" Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Content="居中打印" 
-                                      IsChecked="True" Margin="5,5,0,0" Checked="ChkCenterPlot_CheckedChanged" Unchecked="ChkCenterPlot_CheckedChanged"/>
+                                      IsChecked="True" Margin="0,8,0,0"
+                                      Checked="ChkCenterPlot_CheckedChanged" Unchecked="ChkCenterPlot_CheckedChanged"/>
                         </Grid>
                     </GroupBox>
 
-                    <TextBlock Text="📄 默认纸张" FontWeight="Bold" Margin="0,5,0,8"/>
-                    <ComboBox x:Name="CbPaper"/>
+                    <TextBlock Text="📄 默认纸张" FontWeight="Bold" Margin="0,10,0,8"/>
+                    <ComboBox x:Name="CbPaper" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="🎨 打印样式表 (CTB/STB)" FontWeight="Bold" Margin="0,0,0,8"/>
-                    <ComboBox x:Name="CbStyles"/>
+                    <TextBlock Text="🎨 打印样式表" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <ComboBox x:Name="CbStyles" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="📦 图框识别设置" FontWeight="Bold" Margin="0,20,0,8"/>
-                    <TextBlock Text="图框块名 (逗号分隔):" Margin="0,0,0,4" FontSize="12"/>
-                    <TextBox x:Name="TbBlockNames" Margin="0,0,0,15"/>
+                    <TextBlock Text="📦 图框块名" FontWeight="Bold" Margin="0,10,0,4"/>
+                    <TextBox x:Name="TbBlockNames" Margin="0,0,0,12" Height="26"/>
 
-                    <CheckBox x:Name="ChkAutoRotate" Content="自动旋转 (适应纸张方向)" IsChecked="True" Margin="0,0,0,20" FontWeight="SemiBold"/>
+                    <CheckBox x:Name="ChkAutoRotate" Content="自动旋转 (适应纸张)" IsChecked="True" Margin="0,5,0,20"/>
 
-                    <Button x:Name="BtnPrint" Content="🚀 开始批量打印" Click="BtnPrint_Click"
-                            Height="40" Background="#007ACC" Foreground="White" FontWeight="Bold" 
-                            Cursor="Hand" BorderThickness="0"/>
+                    <Button x:Name="BtnPrint" Content="🚀 开始批量自动打印" Click="BtnPrint_Click"
+                            Height="45" Background="#007ACC" Foreground="White" FontWeight="Bold" BorderThickness="0"/>
                 </StackPanel>
             </ScrollViewer>
         </Border>
@@ -125,26 +128,28 @@
             </Grid.RowDefinitions>
 
             <DockPanel Grid.Row="0" Margin="0,0,0,10">
-                <TextBlock Text="📚 待打印文件列表" FontWeight="Bold" FontSize="14" DockPanel.Dock="Left"/>
+                <TextBlock Text="📚 打印执行任务列表" FontWeight="Bold" FontSize="14" DockPanel.Dock="Left"/>
                 <TextBlock x:Name="TxtCount" Text="共 0 个文件" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="Gray"/>
             </DockPanel>
 
             <ListView x:Name="LvFiles" Grid.Row="1" BorderThickness="1" BorderBrush="#DDD" Background="White">
                 <ListView.View>
                     <GridView>
-                        <GridViewColumn Width="40" HeaderContainerStyle="{StaticResource LeftAlignedHeaderStyle}">
+                        <GridViewColumn Width="45" HeaderContainerStyle="{StaticResource LeftAlignedHeaderStyle}">
                             <GridViewColumn.Header>
-                                <CheckBox ToolTip="全选/反选" 
-                  IsChecked="False" 
-                  Click="HeaderCheckBox_Click"
-                  VerticalAlignment="Center" 
-                  Margin="12,0,0,0"/>
+                                <CheckBox ToolTip="全选" Click="HeaderCheckBox_Click" Margin="5,0,0,0"/>
                             </GridViewColumn.Header>
                             <GridViewColumn.CellTemplate>
                                 <DataTemplate>
-                                    <CheckBox IsChecked="{Binding IsSelected}" 
-                      VerticalAlignment="Center" 
-                      Margin="6,0,0,0"/>
+                                    <CheckBox IsChecked="{Binding IsSelected}" VerticalAlignment="Center"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+
+                        <GridViewColumn Header="打印状态" Width="100">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Status}" Style="{StaticResource StatusTextStyle}"/>
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>
@@ -157,7 +162,15 @@
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>
 
-                        <GridViewColumn Header="状态" Width="100" DisplayMemberBinding="{Binding VersionStatus}"/>
+                        <GridViewColumn Header="交互操作" Width="100">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="手动拾取" Click="BtnManualPlot_Click" 
+                                            Style="{StaticResource ManualButtonStyle}"
+                                            Padding="8,2" Background="#FFF9ED" BorderBrush="#FFB900" Foreground="#9A6200"/>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
                     </GridView>
                 </ListView.View>
             </ListView>

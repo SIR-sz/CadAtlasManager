@@ -1,6 +1,9 @@
-﻿using CadAtlasManager.Models;
+﻿using Autodesk.AutoCAD.ApplicationServices;
+using CadAtlasManager.Models;
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -10,6 +13,7 @@ namespace CadAtlasManager.UI
     {
         private List<PlotCandidate> _candidates;
 
+        // 供外部获取最终结果（如果需要）
         public BatchPlotConfig FinalConfig { get; private set; }
         public List<string> ConfirmedFiles { get; private set; }
 
@@ -21,8 +25,6 @@ namespace CadAtlasManager.UI
             TxtCount.Text = $"共 {_candidates.Count} 个文件";
 
             LoadInitialData();
-            // 注意：LoadInitialData 内部会根据配置设置 CheckBox，从而触发 CheckedChanged 事件
-            // 为了确保状态一致，最后再显式调用一次 UI 状态更新
             UpdateScaleUiState();
         }
 
@@ -31,54 +33,190 @@ namespace CadAtlasManager.UI
             var config = ConfigManager.Load() ?? new AppConfig();
             TbBlockNames.Text = config.TitleBlockNames ?? "TK,A3图框";
 
-            // 1. 打印机
             var plotters = CadService.GetPlotters();
             CbPrinters.ItemsSource = plotters;
             string lastPrinter = !string.IsNullOrEmpty(config.LastPrinter) ? config.LastPrinter : "DWG To PDF.pc3";
             if (plotters.Contains(lastPrinter)) CbPrinters.SelectedItem = lastPrinter;
             else if (plotters.Count > 0) CbPrinters.SelectedIndex = 0;
 
-            // 2. 样式表
             var styles = CadService.GetStyleSheets();
             CbStyles.ItemsSource = styles;
             string lastStyle = !string.IsNullOrEmpty(config.LastStyleSheet) ? config.LastStyleSheet : "monochrome.ctb";
             if (styles.Contains(lastStyle)) CbStyles.SelectedItem = lastStyle;
 
-            // --- 修改3: 恢复上一次的参数设置 ---
-
-            // 打印顺序
             if (config.LastOrderType == PlotOrderType.Vertical) RbOrderV.IsChecked = true;
             else RbOrderH.IsChecked = true;
 
-            // 布满图纸 (默认按配置，如果配置是默认值则为 False)
             ChkFitToPaper.IsChecked = config.LastFitToPaper;
-
-            // 比例 (默认 "1:1")
             CbScale.Text = !string.IsNullOrEmpty(config.LastScaleType) ? config.LastScaleType : "1:1";
-
-            // 居中打印
             ChkCenterPlot.IsChecked = config.LastCenterPlot;
-
-            // 偏移
             TbOffsetX.Text = config.LastOffsetX.ToString();
             TbOffsetY.Text = config.LastOffsetY.ToString();
-
-            // 自动旋转
             ChkAutoRotate.IsChecked = config.LastAutoRotate;
         }
 
-        // 打印机改变，联动纸张
+        // --- 核心修改1：实时从 UI 抓取配置的方法 ---
+        private BatchPlotConfig GetCurrentUiConfig()
+        {
+            if (CbPrinters.SelectedItem == null || CbPaper.SelectedItem == null) return null;
+
+            double offX = 0, offY = 0;
+            double.TryParse(TbOffsetX.Text, out offX);
+            double.TryParse(TbOffsetY.Text, out offY);
+
+            string scaleStr = ChkFitToPaper.IsChecked == true ? "Fit" : CbScale.Text.Trim();
+            if (string.IsNullOrEmpty(scaleStr)) scaleStr = "1:1";
+
+            return new BatchPlotConfig
+            {
+                PrinterName = CbPrinters.SelectedItem.ToString(),
+                MediaName = CbPaper.SelectedItem.ToString(),
+                StyleSheet = CbStyles.SelectedItem?.ToString(),
+                TitleBlockNames = TbBlockNames.Text.Trim(),
+                AutoRotate = ChkAutoRotate.IsChecked == true,
+                OrderType = (RbOrderV.IsChecked == true) ? PlotOrderType.Vertical : PlotOrderType.Horizontal,
+                ScaleType = scaleStr,
+                PlotCentered = ChkCenterPlot.IsChecked == true,
+                OffsetX = offX,
+                OffsetY = offY
+            };
+        }
+
+        // --- 核心修改2：开始批量自动打印 ---
+        private async void BtnPrint_Click(object sender, RoutedEventArgs e)
+        {
+            var config = GetCurrentUiConfig();
+            if (config == null) return;
+
+            var selectedItems = _candidates.Where(c => c.IsSelected).ToList();
+            if (selectedItems.Count == 0) return;
+
+            var btn = sender as Button;
+            btn.IsEnabled = false; // 禁用按钮，防止打印中途再次点击
+
+            foreach (var item in selectedItems)
+            {
+                // 1. 更新状态文字，此时还在主线程
+                item.Status = "正在打印...";
+
+                // 2. 重要：给 UI 线程一个极其短暂的停顿，让 ListView 能够刷新显示“正在打印...”
+                await Task.Delay(100);
+
+                try
+                {
+                    string directory = System.IO.Path.GetDirectoryName(item.FilePath);
+                    string outputDir = System.IO.Path.Combine(directory, "_Plot");
+
+                    if (!System.IO.Directory.Exists(outputDir))
+                        System.IO.Directory.CreateDirectory(outputDir);
+
+                    // 【核心修复】：移除 Task.Run，直接在主线程调用
+                    // 虽然打印单个文件时 UI 会暂时无响应，但这在 AutoCAD 中是最安全、不会崩溃的做法
+                    var results = CadService.BatchPlotByTitleBlocks(item.FilePath, outputDir, config);
+
+                    if (results != null && results.Count > 0)
+                    {
+                        item.IsSuccess = true;
+                        item.Status = $"成功({results.Count}张)";
+                    }
+                    else
+                    {
+                        item.IsSuccess = false;
+                        item.Status = "未识别到图框";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    item.IsSuccess = false;
+                    item.Status = "错误";
+                    // 在主线程中，可以安全地弹出报错信息
+                    MessageBox.Show($"文件 {item.FileName} 打印失败：\n{ex.Message}");
+                }
+
+                // 3. 处理完一个文件后，再次短暂释放 CPU，让界面更新
+                await Task.Delay(50);
+            }
+
+            btn.IsEnabled = true;
+            SaveCurrentConfig(config);
+        }
+
+        // --- 核心修改3：手动打印按钮点击事件 ---
+        private void BtnManualPlot_Click(object sender, RoutedEventArgs e)
+        {
+            var btn = sender as Button;
+            var item = btn.DataContext as PlotCandidate;
+            if (item == null) return;
+
+            var config = GetCurrentUiConfig();
+            if (config == null) return;
+
+            this.Hide(); // 隐藏界面以便操作 CAD
+
+            try
+            {
+                var docMgr = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager;
+                var doc = docMgr.Open(item.FilePath, false);
+                docMgr.MdiActiveDocument = doc;
+
+                // --- 核心修复：在这里定义 outputDir ---
+                string directory = System.IO.Path.GetDirectoryName(item.FilePath);
+                string outputDir = System.IO.Path.Combine(directory, "_Plot");
+
+                if (!System.IO.Directory.Exists(outputDir))
+                    System.IO.Directory.CreateDirectory(outputDir);
+
+                // 调用手动拾取服务，务必传递 outputDir
+                int count = CadService.ManualPickAndPlot(doc, outputDir, config);
+
+                if (count > 0)
+                {
+                    item.IsSuccess = true;
+                    item.Status = $"手动成功({count}张)";
+                }
+                doc.CloseAndDiscard();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("手动打印出错: " + ex.Message);
+            }
+            finally
+            {
+                this.ShowDialog();
+            }
+        }
+
+        private void SaveCurrentConfig(BatchPlotConfig final)
+        {
+            try
+            {
+                var config = ConfigManager.Load() ?? new AppConfig();
+                config.TitleBlockNames = final.TitleBlockNames;
+                config.LastPrinter = final.PrinterName;
+                config.LastMedia = final.MediaName;
+                config.LastStyleSheet = final.StyleSheet;
+                config.LastOrderType = final.OrderType;
+                config.LastAutoRotate = final.AutoRotate;
+                config.LastFitToPaper = ChkFitToPaper.IsChecked == true;
+                config.LastScaleType = CbScale.Text.Trim();
+                config.LastCenterPlot = final.PlotCentered;
+                config.LastOffsetX = final.OffsetX;
+                config.LastOffsetY = final.OffsetY;
+                ConfigManager.Save(config);
+            }
+            catch { }
+        }
+
+        // --- 其他 UI 交互保持不变 ---
         private void CbPrinters_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CbPrinters.SelectedItem == null) return;
             string device = CbPrinters.SelectedItem.ToString();
             var mediaList = CadService.GetMediaList(device);
             CbPaper.ItemsSource = mediaList;
-
             var config = ConfigManager.Load();
             string lastMedia = config?.LastMedia;
-            if (!string.IsNullOrEmpty(lastMedia) && mediaList.Contains(lastMedia))
-                CbPaper.SelectedItem = lastMedia;
+            if (!string.IsNullOrEmpty(lastMedia) && mediaList.Contains(lastMedia)) CbPaper.SelectedItem = lastMedia;
             else
             {
                 var a3 = mediaList.FirstOrDefault(m => m.ToUpper().Contains("A3"));
@@ -87,92 +225,14 @@ namespace CadAtlasManager.UI
             }
         }
 
-        // 交互逻辑：勾选"布满"时，禁用比例输入框
-        private void ChkFitToPaper_CheckedChanged(object sender, RoutedEventArgs e)
-        {
-            UpdateScaleUiState();
-        }
-
-        // 交互逻辑：勾选"居中"时，禁用偏移输入框
-        private void ChkCenterPlot_CheckedChanged(object sender, RoutedEventArgs e)
-        {
-            UpdateScaleUiState();
-        }
+        private void ChkFitToPaper_CheckedChanged(object sender, RoutedEventArgs e) => UpdateScaleUiState();
+        private void ChkCenterPlot_CheckedChanged(object sender, RoutedEventArgs e) => UpdateScaleUiState();
 
         private void UpdateScaleUiState()
         {
             if (CbScale == null || TbOffsetX == null) return;
-
-            bool isFit = ChkFitToPaper.IsChecked == true;
-            CbScale.IsEnabled = !isFit;
-
-            bool isCenter = ChkCenterPlot.IsChecked == true;
-            TbOffsetX.IsEnabled = !isCenter;
-            TbOffsetY.IsEnabled = !isCenter;
-        }
-
-        private void BtnPrint_Click(object sender, RoutedEventArgs e)
-        {
-            ConfirmedFiles = _candidates.Where(c => c.IsSelected).Select(c => c.FilePath).ToList();
-            if (ConfirmedFiles.Count == 0) { MessageBox.Show("请至少勾选一个文件。"); return; }
-            if (CbPrinters.SelectedItem == null || CbPaper.SelectedItem == null) { MessageBox.Show("请选择打印机和纸张。"); return; }
-            if (string.IsNullOrWhiteSpace(TbBlockNames.Text)) { MessageBox.Show("请输入图框块名。"); return; }
-
-            // 解析偏移
-            double offX = 0, offY = 0;
-            double.TryParse(TbOffsetX.Text, out offX);
-            double.TryParse(TbOffsetY.Text, out offY);
-
-            // 解析比例
-            // 如果勾选布满，则 Type="Fit"
-            // 否则取下拉框的值（可能是 "1:100" 或 "1:1" 等）
-            string scaleStr = "Fit";
-            if (ChkFitToPaper.IsChecked == false)
-            {
-                scaleStr = CbScale.Text.Trim();
-                if (string.IsNullOrEmpty(scaleStr)) scaleStr = "1:1"; // 默认兜底
-            }
-
-            FinalConfig = new BatchPlotConfig
-            {
-                PrinterName = CbPrinters.SelectedItem.ToString(),
-                MediaName = CbPaper.SelectedItem.ToString(),
-                StyleSheet = CbStyles.SelectedItem?.ToString(),
-                TitleBlockNames = TbBlockNames.Text.Trim(),
-                AutoRotate = ChkAutoRotate.IsChecked == true,
-                OrderType = (RbOrderV.IsChecked == true) ? PlotOrderType.Vertical : PlotOrderType.Horizontal,
-
-                ScaleType = scaleStr,
-                PlotCentered = ChkCenterPlot.IsChecked == true,
-                OffsetX = offX,
-                OffsetY = offY
-            };
-
-            // --- 修改3: 保存打印参数设置 ---
-            try
-            {
-                var config = ConfigManager.Load() ?? new AppConfig();
-
-                // 基础设置
-                config.TitleBlockNames = FinalConfig.TitleBlockNames;
-                config.LastPrinter = FinalConfig.PrinterName;
-                config.LastMedia = FinalConfig.MediaName;
-                config.LastStyleSheet = FinalConfig.StyleSheet;
-
-                // 扩展设置 (新功能)
-                config.LastOrderType = FinalConfig.OrderType;
-                config.LastAutoRotate = FinalConfig.AutoRotate;
-                config.LastFitToPaper = ChkFitToPaper.IsChecked == true;
-                config.LastScaleType = CbScale.Text.Trim(); // 保存下拉框的文本，而不是 FinalConfig.ScaleType (因为后者如果是Fit会被覆盖)
-                config.LastCenterPlot = FinalConfig.PlotCentered;
-                config.LastOffsetX = FinalConfig.OffsetX;
-                config.LastOffsetY = FinalConfig.OffsetY;
-
-                ConfigManager.Save(config);
-            }
-            catch { }
-
-            DialogResult = true;
+            CbScale.IsEnabled = ChkFitToPaper.IsChecked != true;
+            TbOffsetX.IsEnabled = TbOffsetY.IsEnabled = ChkCenterPlot.IsChecked != true;
         }
 
         private void HeaderCheckBox_Click(object sender, RoutedEventArgs e)
@@ -183,6 +243,11 @@ namespace CadAtlasManager.UI
                 foreach (var item in _candidates) item.IsSelected = val;
                 LvFiles.Items.Refresh();
             }
+        }
+
+        private void BtnClose_Click(object sender, RoutedEventArgs e)
+        {
+            this.DialogResult = true;
         }
     }
 }
