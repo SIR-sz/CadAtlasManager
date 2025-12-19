@@ -1,4 +1,5 @@
 ﻿// 【关键修改：引用新拆分的命名空间】
+using Autodesk.AutoCAD.ApplicationServices;
 using CadAtlasManager.Models;
 using CadAtlasManager.UI;
 using PdfSharp.Pdf;
@@ -17,6 +18,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using AcApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using UserControl = System.Windows.Controls.UserControl;
 using WinForms = System.Windows.Forms;
 
@@ -773,10 +775,13 @@ namespace CadAtlasManager
 
 
         // [修改方法：MenuItem_BatchPlot_Click]
+        // [AtlasView.xaml.cs]
+        // [AtlasView.xaml.cs] 完整的方法实现
         private void MenuItem_BatchPlot_Click(object sender, RoutedEventArgs e)
         {
             if (_activeProject == null) { MessageBox.Show("请先选择一个项目。"); return; }
 
+            // 1. 获取选中的 DWG 文件 (修复 dwgFiles 缺失)
             var selectedItems = GetAllSelectedItems();
             if (selectedItems.Count == 0 && GetSelectedItem() != null) selectedItems.Add(GetSelectedItem());
 
@@ -786,63 +791,99 @@ namespace CadAtlasManager
 
             if (dwgFiles.Count == 0) return;
 
-            // --- 核心改造点 1：按文件夹对 DWG 分组 ---
-            var groupedFiles = dwgFiles.GroupBy(f => Path.GetDirectoryName(f.FullPath));
-
-            // 弹出打印设置对话框 (复用原有逻辑)
-            // 注意：这里我们取第一组进行状态预估，仅作界面展示参考
-            var firstGroup = groupedFiles.First();
-            var candidates = PrepareCandidates(firstGroup.ToList()); // 提取出的辅助方法，见下文
-
+            // 2. 准备候选列表并弹出设置对话框 (修复 dialog 缺失)
+            var candidates = PrepareCandidates(dwgFiles);
             var dialog = new BatchPlotDialog(candidates);
+
             if (dialog.ShowDialog() != true) return;
 
+            // 3. 执行混合打印流程
             var config = dialog.FinalConfig;
-            var confirmedPaths = dialog.ConfirmedFiles; // 用户选中的完整路径列表
+            var confirmedDwgs = dwgFiles.Where(d => dialog.ConfirmedFiles.Contains(d.FullPath)).ToList();
 
-            int totalSuccess = 0;
-            Mouse.OverrideCursor = Cursors.Wait;
+            ExecuteHybridPlotWorkflow(confirmedDwgs, config);
+        }
+
+        private void ExecuteHybridPlotWorkflow(List<FileSystemItem> dwgs, BatchPlotConfig config)
+        {
+            var results = new List<PlotFileResult>();
+            System.Windows.Input.Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
 
             try
             {
-                // --- 核心改造点 2：循环处理每个分组，动态计算输出路径 ---
-                foreach (var group in groupedFiles)
+                // 第一步：全自动批量执行
+                foreach (var dwg in dwgs)
                 {
-                    string sourceFolder = group.Key;
-                    // 目标路径：当前 DWG 文件夹下的 _Plot
-                    string targetPlotDir = Path.Combine(sourceFolder, "_Plot");
-                    if (!Directory.Exists(targetPlotDir)) Directory.CreateDirectory(targetPlotDir);
+                    string targetDir = Path.Combine(Path.GetDirectoryName(dwg.FullPath), "_Plot");
+                    if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
 
-                    // 针对当前文件夹加载历史记录，确保版本校验正常
-                    PlotMetaManager.LoadHistory(targetPlotDir);
+                    var res = CadService.EnhancedBatchPlot(dwg.FullPath, targetDir, config);
+                    results.Add(res);
+                }
+                System.Windows.Input.Mouse.OverrideCursor = null;
 
-                    foreach (var dwg in group)
+                // 第二步：汇总展示
+                int failCount = results.Count(r => !r.IsSuccess);
+                if (failCount > 0)
+                {
+                    string msg = $"自动打印完成。\n成功: {results.Count - failCount} 个\n识别失败: {failCount} 个\n\n是否立即开始手动拾取失败的图纸？";
+                    if (MessageBox.Show(msg, "打印确认", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
                     {
-                        if (!confirmedPaths.Contains(dwg.FullPath)) continue;
-
-                        List<string> generatedPdfs = CadService.BatchPlotByTitleBlocks(dwg.FullPath, targetPlotDir, config);
-
-                        if (generatedPdfs.Count > 0)
+                        // 第三步：手动拾取阶段
+                        foreach (var failItem in results.Where(r => !r.IsSuccess))
                         {
-                            string freshFingerprint = CadService.GetContentFingerprint(dwg.FullPath);
-                            string freshTime = CadService.GetFileTimestamp(dwg.FullPath);
-                            foreach (var pdfName in generatedPdfs)
-                            {
-                                // 记录保存在各自文件夹下的 .cadatlas 目录中
-                                PlotMetaManager.SaveRecord(targetPlotDir, pdfName, dwg.Name, freshFingerprint, freshTime);
-                            }
-                            totalSuccess += generatedPdfs.Count;
+                            // 使用 AcApp 引用 AutoCAD 的 Application
+                            var acDoc = AcApp.DocumentManager.Open(failItem.FilePath, false);
+                            string plotDir = Path.Combine(Path.GetDirectoryName(failItem.FilePath), "_Plot");
+
+                            MessageBox.Show($"正在手动拾取文件：\n{failItem.FileName}\n\n请在 CAD 中连续框选，按回车结束该文件。");
+                            CadService.ManualPickAndPlot(acDoc, plotDir, config);
+
+                            acDoc.CloseAndDiscard();
                         }
                     }
                 }
+                else
+                {
+                    MessageBox.Show("全自动打印已全部完成！");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                MessageBox.Show("混合打印流程出错: " + ex.Message);
             }
             finally
             {
-                Mouse.OverrideCursor = null;
-                RefreshPlotTree(); // 刷新归档树
+                System.Windows.Input.Mouse.OverrideCursor = null;
+                RefreshPlotTree();
             }
-            MessageBox.Show($"打印完成，共生成 {totalSuccess} 页 PDF。");
+        }
 
+        private void ExecuteManualPhase(List<PlotFileResult> fails, BatchPlotConfig config)
+        {
+            foreach (var item in fails)
+            {
+                try
+                {
+                    // 打开文件
+                    var doc = AcApp.DocumentManager.Open(item.FilePath, false);
+                    string targetDir = Path.Combine(Path.GetDirectoryName(item.FilePath), "_Plot");
+
+                    MessageBox.Show($"正在处理：{item.FileName}\n\n请在 CAD 窗口中连续框选区域，按回车结束该文件。");
+
+                    // 调用手动拾取服务
+                    int count = CadService.ManualPickAndPlot(doc, targetDir, config);
+
+                    // 处理元数据关联（如果有的话，复用原来的 PlotMetaManager）
+                    // ... 
+
+                    doc.CloseAndDiscard(); // 及时关闭，保持 CAD 运行稳定
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"手动打印 [{item.FileName}] 出错: {ex.Message}");
+                }
+            }
         }
 
         // [添加至类: UI/AtlasView.xaml.cs]
