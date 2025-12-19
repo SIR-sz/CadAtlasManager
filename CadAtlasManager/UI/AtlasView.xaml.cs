@@ -1,7 +1,6 @@
 ﻿// 【关键修改：引用新拆分的命名空间】
 using CadAtlasManager.Models;
 using CadAtlasManager.UI;
-// 添加这两个引用
 using PdfSharp.Pdf;
 using PdfSharp.Pdf.IO;
 using System;
@@ -48,6 +47,9 @@ namespace CadAtlasManager
         private FileSystemItem _lastSelectedItem = null;
         private FileSystemItem _currentRemarkItem = null; // 当前正在写备注的文件
 
+        // [添加到 AtlasView.xaml.cs 的字段声明区]
+        private string _currentProjectFolderPath = ""; // 追踪当前项目视图路径
+
         private readonly List<string> _allowedExtensions = new List<string>
         {
             ".dwg", ".dxf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".wps", ".pdf", ".txt",
@@ -84,8 +86,11 @@ namespace CadAtlasManager
 
         private void LoadProjectFileListItems(FileSystemItem folder)
         {
+            if (folder == null) return;
+            _currentProjectFolderPath = folder.FullPath; // 关键：记录当前路径
+
             ProjectFileListItems.Clear();
-            if (folder == null || !Directory.Exists(folder.FullPath)) return;
+            if (!Directory.Exists(folder.FullPath)) return;
 
             try
             {
@@ -252,15 +257,54 @@ namespace CadAtlasManager
             }
         }
         // 项目工作台的文件列表双击：始终以 Edit 模式打开
+        // [修改文件: UI/AtlasView.xaml.cs]
         private void ProjectFileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            if (ProjectFileList.SelectedItem is FileSystemItem item && item.Type == ExplorerItemType.File)
+            if (ProjectFileList.SelectedItem is FileSystemItem item)
             {
-                // 强制使用 "Edit" 模式，不看资料库的单选框状态
-                OpenFileSmart(item.FullPath, "Edit");
+                if (item.Type == ExplorerItemType.File)
+                {
+                    // 如果是文件：始终以 Edit 模式打开
+                    OpenFileSmart(item.FullPath, "Edit");
+                }
+                else if (item.Type == ExplorerItemType.Folder)
+                {
+                    // 如果是文件夹：双击打开下一级目录
+                    // 1. 加载此文件夹的内容到右侧明细列表
+                    LoadProjectFileListItems(item);
+
+                    // 2. (进阶建议) 同步左侧树状目录的展开与选中状态
+                    // 这样可以确保左右两边显示的一致性
+                    SyncTreeSelection(ProjectTreeItems, item.FullPath);
+                }
             }
         }
+        // [添加到 AtlasView.xaml.cs]
+        private bool SyncTreeSelection(ObservableCollection<FileSystemItem> nodes, string targetPath)
+        {
+            foreach (var node in nodes)
+            {
+                if (node.FullPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    // 找到目标节点：清除旧选中，设置新选中并展开
+                    ClearAllSelection(ProjectTreeItems); // 使用现有的清除方法
+                    node.IsItemSelected = true;
+                    node.IsExpanded = true;
+                    return true;
+                }
 
+                if (node.Children.Count > 0)
+                {
+                    if (SyncTreeSelection(node.Children, targetPath))
+                    {
+                        // 如果在子项中找到了，父项也需要展开
+                        node.IsExpanded = true;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
         // 占位方法：删除
         // =================================================================
         // 【Phase 2 新增】删除与合并具体实现
@@ -289,9 +333,13 @@ namespace CadAtlasManager
             {
                 foreach (var item in targets)
                 {
-                    if (File.Exists(item.FullPath))
+                    if (System.IO.File.Exists(item.FullPath))
                     {
-                        File.Delete(item.FullPath);
+                        // 使用全路径引用，避免 SearchOption 冲突
+                        Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                            item.FullPath,
+                            Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                            Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
 
                         // 同步删除备注
                         RemarkManager.HandleDelete(item.FullPath);
@@ -304,20 +352,15 @@ namespace CadAtlasManager
                 MessageBox.Show($"删除过程中发生错误：\n{ex.Message}", "错误");
             }
 
-            // 刷新逻辑改进
+            // 刷新逻辑
             var currentFolder = PlotFolderTree.SelectedItem as FileSystemItem;
             if (currentFolder != null)
             {
-                LoadPlotFilesList(currentFolder); // 仅刷新右侧列表，速度最快
+                LoadPlotFilesList(currentFolder);
             }
             else
             {
-                RefreshPlotTree(); // 保底刷新全树
-            }
-
-            if (successCount > 0)
-            {
-                // 可以在这里加个简单的提示，或者直接静默
+                RefreshPlotTree();
             }
         }
 
@@ -607,19 +650,48 @@ namespace CadAtlasManager
             return match;
         }
 
+        // [修改方法: RefreshProjectTree]
+        // [修改方法: RefreshProjectTree]
         private void RefreshProjectTree()
         {
-            ProjectTreeItems.Clear();
             if (_activeProject == null || !Directory.Exists(_activeProject.Path)) return;
 
+            // 1. 记录当前所有展开的路径
+            List<string> expandedPaths = new List<string>();
+            GetExpandedPaths(ProjectTreeItems, expandedPaths);
+
+            // 2. 彻底清空并重建树
+            ProjectTreeItems.Clear();
             RemarkManager.LoadRemarks(_activeProject.Path);
 
             var root = CreateItem(_activeProject.Path, ExplorerItemType.Folder, true);
-            root.Name = _activeProject.Name; // 显示项目别名
+            root.Name = _activeProject.Name;
             root.TypeIcon = "🏗️";
 
             LoadProjectSubItems(root);
             ProjectTreeItems.Add(root);
+
+            // 3. 恢复展开状态，并根据记录的路径重新定位选中项
+            RestoreProjectTreeState(ProjectTreeItems, expandedPaths, _currentProjectFolderPath);
+        }
+
+        // 专门为项目树定制的恢复逻辑
+        private void RestoreProjectTreeState(ObservableCollection<FileSystemItem> nodes, List<string> expandedPaths, string targetPath)
+        {
+            foreach (var node in nodes)
+            {
+                if (expandedPaths.Contains(node.FullPath)) node.IsExpanded = true;
+
+                if (node.FullPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    node.IsItemSelected = true;
+                    // 关键：强制刷新右侧列表，确保删除后的文件消失
+                    LoadProjectFileListItems(node);
+                }
+
+                if (node.Children.Count > 0)
+                    RestoreProjectTreeState(node.Children, expandedPaths, targetPath);
+            }
         }
 
         private void LoadProjectSubItems(FileSystemItem parent)
@@ -710,6 +782,7 @@ namespace CadAtlasManager
                 RefreshPlotTree(); // 刷新归档树
             }
             MessageBox.Show($"打印完成，共生成 {totalSuccess} 页 PDF。");
+
         }
         // 辅助方法：准备候选列表（保留版本校验核心）
         private List<PlotCandidate> PrepareCandidates(List<FileSystemItem> dwgs)
@@ -867,18 +940,61 @@ namespace CadAtlasManager
                 {
                     foreach (var item in items)
                     {
-                        if (item.Type == ExplorerItemType.File) File.Delete(item.FullPath);
-                        else Directory.Delete(item.FullPath, true);
+                        if (item.Type == ExplorerItemType.File)
+                        {
+                            if (System.IO.File.Exists(item.FullPath))
+                            {
+                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                                    item.FullPath,
+                                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                            }
+                        }
+                        else
+                        {
+                            if (System.IO.Directory.Exists(item.FullPath))
+                            {
+                                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(
+                                    item.FullPath,
+                                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+                            }
+                        }
 
-                        // 【同步删除备注】
+                        // 同步删除备注
                         RemarkManager.HandleDelete(item.FullPath);
                     }
                     RefreshProjectTree(); RefreshPlotTree();
+                    if (!string.IsNullOrEmpty(_currentProjectFolderPath))
+                    {
+                        // 尝试在重新生成后的树中寻找之前的文件夹对象
+                        var currentItem = FindItemInTree(ProjectTreeItems, _currentProjectFolderPath);
+                        if (currentItem != null)
+                        {
+                            // 显式触发一次右侧列表加载，确保磁盘上的删除结果被刷新到 UI
+                            LoadProjectFileListItems(currentItem);
+                        }
+                    }
                 }
                 catch (System.Exception ex) { MessageBox.Show("删除失败: " + ex.Message); }
             }
         }
+        // [添加到 AtlasView.xaml.cs]
+        private FileSystemItem FindItemInTree(ObservableCollection<FileSystemItem> nodes, string path)
+        {
+            foreach (var node in nodes)
+            {
+                if (node.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase))
+                    return node;
 
+                if (node.Children.Count > 0)
+                {
+                    var found = FindItemInTree(node.Children, path);
+                    if (found != null) return found;
+                }
+            }
+            return null;
+        }
         private void ProjectTree_Drop(object sender, DragEventArgs e)
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -1153,6 +1269,7 @@ namespace CadAtlasManager
         private void BtnAddProject_Click(object sender, RoutedEventArgs e) { using (var d = new WinForms.FolderBrowserDialog()) { if (d.ShowDialog() == WinForms.DialogResult.OK && !ProjectList.Any(p => p.Path == d.SelectedPath)) { var p = new ProjectItem(Path.GetFileName(d.SelectedPath), d.SelectedPath); ProjectList.Add(p); CbProjects.SelectedItem = p; SaveConfig(); } } }
 
         private void ClearAllSelection(ObservableCollection<FileSystemItem> items) { if (items == null) return; foreach (var i in items) { i.IsItemSelected = false; ClearAllSelection(i.Children); } }
+        // [修改文件: UI/AtlasView.xaml.cs]
         private List<FileSystemItem> GetAllSelectedItems()
         {
             var list = new List<FileSystemItem>();
@@ -1162,22 +1279,40 @@ namespace CadAtlasManager
 
             if (tabIndex == 0)
             {
-                // 仅收集资料库选中项
+                // 资料库保持原样
                 CollectSelected(Items, list);
             }
             else if (tabIndex == 1)
             {
-                // 仅收集项目工作台选中项
-                CollectSelected(ProjectTreeItems, list);
-                foreach (var item in ProjectFileListItems)
-                    if (item.IsChecked || item.IsItemSelected) list.Add(item);
+                // --- 核心修复：项目工作台 ---
+                // 优先检查右侧列表（明细表）是否有勾选或选中的项
+                var listSelected = ProjectFileListItems.Where(i => i.IsChecked || i.IsItemSelected).ToList();
+
+                if (listSelected.Count > 0)
+                {
+                    // 如果右侧列表有选中内容，则只处理列表内容，不碰左侧树
+                    list.AddRange(listSelected);
+                }
+                else
+                {
+                    // 只有当右侧列表完全没选时，才去收集左侧树的选中项（用于删除整个目录）
+                    CollectSelected(ProjectTreeItems, list);
+                }
             }
             else if (tabIndex == 2)
             {
-                // 仅收集图纸工作台选中项
-                CollectSelected(PlotFolderItems, list);
-                foreach (var item in PlotFileListItems)
-                    if (item.IsChecked || item.IsItemSelected) list.Add(item);
+                // --- 核心修复：图纸工作台 ---
+                // 同样优先检查右侧列表
+                var listSelected = PlotFileListItems.Where(i => i.IsChecked || i.IsItemSelected).ToList();
+
+                if (listSelected.Count > 0)
+                {
+                    list.AddRange(listSelected);
+                }
+                else
+                {
+                    CollectSelected(PlotFolderItems, list);
+                }
             }
 
             return list;
@@ -1215,7 +1350,23 @@ namespace CadAtlasManager
             }
         }
         private void BtnRefreshProject_Click(object sender, RoutedEventArgs e) => RefreshProjectTree();
-        private void BtnRefresh_Click(object sender, RoutedEventArgs e) => ReloadAtlasTree();
+        // [修改方法: BtnRefresh_Click]
+        private void BtnRefresh_Click(object sender, RoutedEventArgs e)
+        {
+            // 根据当前选中的 Tab 索引执行刷新
+            switch (MainTabControl.SelectedIndex)
+            {
+                case 0: // 资料库
+                    ReloadAtlasTree();
+                    break;
+                case 1: // 项目工作台
+                    RefreshProjectTree();
+                    break;
+                case 2: // 图纸工作台
+                    RefreshPlotTree();
+                    break;
+            }
+        }
         private void BtnRefreshPlot_Click(object sender, RoutedEventArgs e) => RefreshPlotTree();
         private void TbSearch_TextChanged(object sender, TextChangedEventArgs e) => ReloadAtlasTree();
         private void CbFileType_SelectionChanged(object sender, SelectionChangedEventArgs e) => ReloadAtlasTree();
@@ -1223,6 +1374,45 @@ namespace CadAtlasManager
         private void BtnOpenProjectFolder_Click(object sender, RoutedEventArgs e) { if (_activeProject != null) Process.Start("explorer.exe", _activeProject.Path); }
         private void BtnOpenPlotFolder_Click(object sender, RoutedEventArgs e) { if (_activeProject != null && Directory.Exists(_activeProject.OutputPath)) Process.Start("explorer.exe", _activeProject.OutputPath); }
 
+        // [添加到 AtlasView.xaml.cs]
+        // 获取当前所有已展开文件夹的路径
+        private void GetExpandedPaths(ObservableCollection<FileSystemItem> nodes, List<string> expandedPaths)
+        {
+            foreach (var node in nodes)
+            {
+                if (node.Type == ExplorerItemType.Folder && node.IsExpanded)
+                {
+                    expandedPaths.Add(node.FullPath);
+                    if (node.Children.Count > 0) GetExpandedPaths(node.Children, expandedPaths);
+                }
+            }
+        }
+
+        // 根据路径恢复展开和选中状态
+        private void RestoreTreeState(ObservableCollection<FileSystemItem> nodes, List<string> expandedPaths, string selectedPath)
+        {
+            foreach (var node in nodes)
+            {
+                // 恢复展开状态
+                if (expandedPaths.Contains(node.FullPath))
+                {
+                    node.IsExpanded = true;
+                }
+
+                // 恢复选中状态
+                if (node.FullPath.Equals(selectedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    node.IsItemSelected = true;
+                    // 确保右侧文件列表也加载该目录
+                    LoadProjectFileListItems(node);
+                }
+
+                if (node.Children.Count > 0)
+                {
+                    RestoreTreeState(node.Children, expandedPaths, selectedPath);
+                }
+            }
+        }
         // =================================================================
         // 【新增】图纸版本校验逻辑
         // =================================================================
