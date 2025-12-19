@@ -50,6 +50,8 @@ namespace CadAtlasManager
         // [添加到 AtlasView.xaml.cs 的字段声明区]
         private string _currentProjectFolderPath = ""; // 追踪当前项目视图路径
 
+        private string _currentPlotFolderPath = ""; // 追踪图纸工作台当前显示的文件夹路径
+
         private readonly List<string> _allowedExtensions = new List<string>
         {
             ".dwg", ".dxf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".wps", ".pdf", ".txt",
@@ -119,47 +121,68 @@ namespace CadAtlasManager
             catch { }
         }
         // [修改方法：RefreshPlotTree]
+        // [修改方法: RefreshPlotTree]
         private void RefreshPlotTree()
         {
+            if (_activeProject == null || !Directory.Exists(_activeProject.Path)) return;
+
+            // 1. 记录当前所有展开的路径
+            List<string> expandedPaths = new List<string>();
+            GetExpandedPaths(PlotFolderItems, expandedPaths);
+
+            // 2. 清空并重建树
             PlotFolderItems.Clear();
             PlotFileListItems.Clear();
 
-            if (_activeProject == null || !Directory.Exists(_activeProject.Path)) return;
+            var stageDirs = Directory.GetDirectories(_activeProject.Path, "_Plot", SearchOption.AllDirectories); //
 
-            // --- 核心改造点 3：递归搜寻所有包含 _Plot 的文件夹 ---
-            var stageDirs = Directory.GetDirectories(_activeProject.Path, "_Plot", SearchOption.AllDirectories);
-
-            foreach (var plotPath in stageDirs)
+            foreach (var plotPath in stageDirs) //
             {
-                // 获取 _Plot 的上一级目录名作为“阶段名称”
                 string stageDir = Path.GetDirectoryName(plotPath);
-                string stageName = (stageDir == _activeProject.Path) ? "项目根目录" : Path.GetFileName(stageDir);
+                string stageName = (stageDir == _activeProject.Path) ? "项目根目录" : Path.GetFileName(stageDir); //
 
-                // 创建第一级：阶段节点
-                var stageNode = new FileSystemItem
+                var stageNode = new FileSystemItem //
                 {
                     Name = stageName,
-                    FullPath = stageDir, // 记录父目录路径，方便后续定位
+                    FullPath = stageDir,
                     Type = ExplorerItemType.Folder,
                     TypeIcon = "🏗️",
                     IsExpanded = true
                 };
 
-                // 创建第二级：分项 PDF
-                var itemSplit = CreateItem(plotPath, ExplorerItemType.Folder);
-                itemSplit.Name = "📄 分项 PDF";
-                LoadPlotFoldersOnly(itemSplit, "Combined"); // 排除合并目录
+                var itemSplit = CreateItem(plotPath, ExplorerItemType.Folder); //
+                itemSplit.Name = "📄 分项 PDF"; //
+                LoadPlotFoldersOnly(itemSplit, "Combined"); //
 
-                // 创建第二级：成果 PDF
-                string combinedPath = Path.Combine(plotPath, "Combined");
+                string combinedPath = Path.Combine(plotPath, "Combined"); //
                 if (!Directory.Exists(combinedPath)) Directory.CreateDirectory(combinedPath);
-                var itemCombined = CreateItem(combinedPath, ExplorerItemType.Folder);
-                itemCombined.Name = "📑 成果 PDF";
+                var itemCombined = CreateItem(combinedPath, ExplorerItemType.Folder); //
+                itemCombined.Name = "📑 成果 PDF"; //
 
                 stageNode.Children.Add(itemSplit);
                 stageNode.Children.Add(itemCombined);
+                PlotFolderItems.Add(stageNode); //
+            }
 
-                PlotFolderItems.Add(stageNode);
+            // 3. 恢复状态
+            RestorePlotTreeState(PlotFolderItems, expandedPaths, _currentPlotFolderPath);
+        }
+
+        // 专门为图纸树定制的恢复逻辑
+        private void RestorePlotTreeState(ObservableCollection<FileSystemItem> nodes, List<string> expandedPaths, string targetPath)
+        {
+            foreach (var node in nodes)
+            {
+                if (expandedPaths.Contains(node.FullPath)) node.IsExpanded = true;
+
+                if (node.FullPath.Equals(targetPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    node.IsItemSelected = true;
+                    LoadPlotFilesList(node); // 强制刷新右侧 PDF 列表
+                }
+
+                if (node.Children.Count > 0)
+                    RestorePlotTreeState(node.Children, expandedPaths, targetPath);
             }
         }
 
@@ -195,29 +218,26 @@ namespace CadAtlasManager
             LoadPlotFilesList(folder);
         }
 
+        // [修改方法: LoadPlotFilesList]
         private void LoadPlotFilesList(FileSystemItem folder)
         {
-            PlotFileListItems.Clear();
-            if (folder == null || !Directory.Exists(folder.FullPath)) return;
+            if (folder == null) return;
+            _currentPlotFolderPath = folder.FullPath; // 关键：记录当前图纸查看路径
+
+            PlotFileListItems.Clear(); //
+            if (!Directory.Exists(folder.FullPath)) return;
 
             try
             {
-                // 加载该文件夹下的所有文件 (不递归)
-                foreach (var file in Directory.GetFiles(folder.FullPath))
+                foreach (var file in Directory.GetFiles(folder.FullPath)) //
                 {
                     string ext = Path.GetExtension(file).ToLower();
-                    // 仅显示 PDF, 图片等
-                    if (".pdf.jpg.jpeg.png.plt".Contains(ext))
+                    if (".pdf.jpg.jpeg.png.plt".Contains(ext)) //
                     {
-                        var item = CreateItem(file, ExplorerItemType.File);
-
-                        // 填充日期
-                        item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm");
-
-                        // 预先检查一下版本状态（如果是PDF）
-                        if (ext == ".pdf") ValidatePdfVersion(item);
-
-                        PlotFileListItems.Add(item);
+                        var item = CreateItem(file, ExplorerItemType.File); //
+                        item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm"); //
+                        if (ext == ".pdf") ValidatePdfVersion(item); //
+                        PlotFileListItems.Add(item); //
                     }
                 }
             }
@@ -361,6 +381,15 @@ namespace CadAtlasManager
             else
             {
                 RefreshPlotTree();
+            }
+            // 双保险：如果通过树刷新没定位到，手动寻找并重载
+            if (!string.IsNullOrEmpty(_currentPlotFolderPath))
+            {
+                var currentItem = FindItemInTree(PlotFolderItems, _currentPlotFolderPath);
+                if (currentItem != null)
+                {
+                    LoadPlotFilesList(currentItem);
+                }
             }
         }
 
@@ -1323,29 +1352,43 @@ namespace CadAtlasManager
         private TreeViewItem GetTreeViewItemUnderMouse(DependencyObject e) { while (e != null && !(e is TreeViewItem)) e = VisualTreeHelper.GetParent(e); return e as TreeViewItem; }
         private void MenuItem_CopyInPlace_Click_Legacy(object sender, RoutedEventArgs e) { /* 保留旧逻辑引用防止报错，实际使用新的 CopyMove */ }
         private void MenuItem_Remove_Click(object sender, RoutedEventArgs e) { if (FileTree.SelectedItem is FileSystemItem i && i.IsRoot) { _loadedAtlasFolders.Remove(i.FullPath); Items.Remove(i); SaveConfig(); } }
+        // [修改方法: BtnRemoveProject_Click]
         private void BtnRemoveProject_Click(object sender, RoutedEventArgs e)
         {
             if (CbProjects.SelectedItem is ProjectItem p)
             {
                 ProjectList.Remove(p);
                 ProjectTreeItems.Clear();
-
-                // --- 修改开始 ---
-                PlotFolderItems.Clear();   // 清空文件夹树
-                PlotFileListItems.Clear(); // 清空文件列表
-                                           // --- 修改结束 ---
+                PlotFolderItems.Clear();
+                PlotFileListItems.Clear();
 
                 _activeProject = null;
+                _currentProjectFolderPath = "";
+                _currentPlotFolderPath = ""; // 【新增】同步重置
+
                 SaveConfig();
             }
         }
+
         private void CbProjects_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CbProjects.SelectedItem is ProjectItem p)
             {
                 _activeProject = p;
+
+                // 1. 重置路径记录（确保“浏览文件”回到根目录）
+                _currentProjectFolderPath = "";
+                _currentPlotFolderPath = "";
+
+                // 2. 【核心修改】显式清空右侧明细列表
+                // 这样在点击新项目的文件夹之前，右侧面板会保持干净
+                ProjectFileListItems.Clear();
+                PlotFileListItems.Clear();
+
+                // 3. 刷新左侧树结构
                 RefreshProjectTree();
-                RefreshPlotTree(); // 【关键】同时刷新图纸工作台
+                RefreshPlotTree();
+
                 SaveConfig();
             }
         }
@@ -1371,8 +1414,55 @@ namespace CadAtlasManager
         private void TbSearch_TextChanged(object sender, TextChangedEventArgs e) => ReloadAtlasTree();
         private void CbFileType_SelectionChanged(object sender, SelectionChangedEventArgs e) => ReloadAtlasTree();
         private void CbProjectFileType_SelectionChanged(object sender, SelectionChangedEventArgs e) => RefreshProjectTree();
-        private void BtnOpenProjectFolder_Click(object sender, RoutedEventArgs e) { if (_activeProject != null) Process.Start("explorer.exe", _activeProject.Path); }
-        private void BtnOpenPlotFolder_Click(object sender, RoutedEventArgs e) { if (_activeProject != null && Directory.Exists(_activeProject.OutputPath)) Process.Start("explorer.exe", _activeProject.OutputPath); }
+        // [修改方法: BtnOpenProjectFolder_Click]
+        private void BtnOpenProjectFolder_Click(object sender, RoutedEventArgs e)
+        {
+            if (_activeProject == null) return;
+
+            // 默认打开项目根目录
+            string targetPath = _activeProject.Path;
+
+            // 逻辑：如果当前明细路径不为空，且目录确实存在，则打开明细目录
+            // 这覆盖了“双击进入子目录”或“点击树节点”后的情况
+            if (!string.IsNullOrEmpty(_currentProjectFolderPath) && Directory.Exists(_currentProjectFolderPath))
+            {
+                targetPath = _currentProjectFolderPath;
+            }
+
+            try
+            {
+                // 使用 Windows 资源管理器打开目标路径
+                Process.Start("explorer.exe", targetPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"无法打开文件夹：\n{ex.Message}", "错误");
+            }
+        }
+        // [修改方法: BtnOpenPlotFolder_Click]
+        private void BtnOpenPlotFolder_Click(object sender, RoutedEventArgs e)
+        {
+            if (_activeProject == null) return;
+
+            // 默认路径：项目定义的输出目录（通常是项目根目录下的 _Plot 文件夹）
+            string targetPath = _activeProject.OutputPath;
+
+            // 核心逻辑：如果当前图纸明细路径记录存在（即你点击或双击进入了某个子目录），则优先打开该目录
+            if (!string.IsNullOrEmpty(_currentPlotFolderPath) && Directory.Exists(_currentPlotFolderPath))
+            {
+                targetPath = _currentPlotFolderPath;
+            }
+
+            try
+            {
+                // 调用资源管理器打开
+                Process.Start("explorer.exe", targetPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"无法打开图纸目录：\n{ex.Message}", "错误");
+            }
+        }
 
         // [添加到 AtlasView.xaml.cs]
         // 获取当前所有已展开文件夹的路径
