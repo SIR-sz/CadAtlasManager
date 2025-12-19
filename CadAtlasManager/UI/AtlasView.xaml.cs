@@ -25,10 +25,12 @@ namespace CadAtlasManager
 {
     public partial class AtlasView : UserControl
     {
+
         public ObservableCollection<FileSystemItem> Items { get; set; }
         public ObservableCollection<FileSystemItem> ProjectTreeItems { get; set; }
         public ObservableCollection<FileSystemItem> PlotFolderItems { get; set; }
         public ObservableCollection<ProjectItem> ProjectList { get; set; }
+        public ObservableCollection<FileSystemItem> ProjectFileListItems { get; set; }
         // 新增：PlotFileListItems 用于右侧列表
         public ObservableCollection<FileSystemItem> PlotFileListItems { get; set; }
         private List<string> _loadedAtlasFolders = new List<string>();
@@ -59,19 +61,57 @@ namespace CadAtlasManager
             ProjectTreeItems = new ObservableCollection<FileSystemItem>();
             PlotFolderItems = new ObservableCollection<FileSystemItem>();
             PlotFileListItems = new ObservableCollection<FileSystemItem>();
+            ProjectFileListItems = new ObservableCollection<FileSystemItem>(); // 初始化
             ProjectList = new ObservableCollection<ProjectItem>();
 
             InitializeComponent();
 
             FileTree.ItemsSource = Items;
             ProjectTree.ItemsSource = ProjectTreeItems;
-
-            // 修改绑定
             PlotFolderTree.ItemsSource = PlotFolderItems;
             PlotFileList.ItemsSource = PlotFileListItems;
+            ProjectFileList.ItemsSource = ProjectFileListItems; // 绑定数据源
 
             CbProjects.ItemsSource = ProjectList;
             LoadConfig();
+        }
+
+        private void ProjectTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+        {
+            var folder = e.NewValue as FileSystemItem;
+            LoadProjectFileListItems(folder);
+        }
+
+        private void LoadProjectFileListItems(FileSystemItem folder)
+        {
+            ProjectFileListItems.Clear();
+            if (folder == null || !Directory.Exists(folder.FullPath)) return;
+
+            try
+            {
+                string filter = (CbProjectFileType.SelectedItem as ComboBoxItem)?.Content.ToString();
+
+                // 1. 加载子文件夹 (解决点击父级显示子文件夹的问题)
+                foreach (var dir in Directory.GetDirectories(folder.FullPath))
+                {
+                    if (new DirectoryInfo(dir).Attributes.HasFlag(FileAttributes.Hidden)) continue;
+                    var item = CreateItem(dir, ExplorerItemType.Folder);
+                    ProjectFileListItems.Add(item);
+                }
+
+                // 2. 加载文件
+                foreach (var file in Directory.GetFiles(folder.FullPath))
+                {
+                    string ext = Path.GetExtension(file).ToLower();
+                    if (_allowedExtensions.Contains(ext) && CheckFileFilter(ext, filter))
+                    {
+                        var item = CreateItem(file, ExplorerItemType.File);
+                        item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm");
+                        ProjectFileListItems.Add(item);
+                    }
+                }
+            }
+            catch { }
         }
         // [修改方法：RefreshPlotTree]
         private void RefreshPlotTree()
@@ -189,13 +229,35 @@ namespace CadAtlasManager
                 item.IsChecked = check;
             }
         }
+        // 项目工作台 - 文件明细列表全选/反选逻辑
+        private void OnSelectAllProjectFiles_Click(object sender, RoutedEventArgs e)
+        {
+            var cb = sender as CheckBox;
+            if (cb == null || ProjectFileListItems == null) return;
 
+            bool isChecked = cb.IsChecked == true;
+
+            // 遍历当前项目列表中的所有项，统一修改选中状态
+            foreach (var item in ProjectFileListItems)
+            {
+                item.IsChecked = isChecked;
+            }
+        }
         // 双击列表文件打开
         private void PlotFileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             if (PlotFileList.SelectedItem is FileSystemItem item)
             {
                 Process.Start(new ProcessStartInfo(item.FullPath) { UseShellExecute = true });
+            }
+        }
+        // 项目工作台的文件列表双击：始终以 Edit 模式打开
+        private void ProjectFileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (ProjectFileList.SelectedItem is FileSystemItem item && item.Type == ExplorerItemType.File)
+            {
+                // 强制使用 "Edit" 模式，不看资料库的单选框状态
+                OpenFileSmart(item.FullPath, "Edit");
             }
         }
 
@@ -564,25 +626,15 @@ namespace CadAtlasManager
         {
             try
             {
-                RemarkManager.LoadRemarks(parent.FullPath); // 预加载
-                string filter = (CbProjectFileType.SelectedItem as ComboBoxItem)?.Content.ToString();
-
+                RemarkManager.LoadRemarks(parent.FullPath);
                 foreach (var dir in Directory.GetDirectories(parent.FullPath))
                 {
                     if (new DirectoryInfo(dir).Attributes.HasFlag(FileAttributes.Hidden)) continue;
-
                     var sub = CreateItem(dir, ExplorerItemType.Folder);
-                    LoadProjectSubItems(sub);
-                    if (filter == "所有格式" || sub.Children.Count > 0) parent.Children.Add(sub);
+                    LoadProjectSubItems(sub); // 递归加载目录
+                    parent.Children.Add(sub);
                 }
-                foreach (var file in Directory.GetFiles(parent.FullPath))
-                {
-                    string ext = Path.GetExtension(file).ToLower();
-                    if (_allowedExtensions.Contains(ext) && CheckFileFilter(ext, filter))
-                    {
-                        parent.Children.Add(CreateItem(file, ExplorerItemType.File));
-                    }
-                }
+                // 注意：这里不再向 parent.Children 添加 File 类型，文件统一交给 DataGrid
             }
             catch { }
         }
@@ -905,10 +957,22 @@ namespace CadAtlasManager
                 {
                     // 如果它还没被选中，或者为了清除其他多选项 -> 执行单选
                     // (注意：这里不要加 !clickedItem.IsItemSelected 判断，否则单机已选项无法清除其他多选项)
+                    // 1. 清除所有左侧树状结构的选中状态
                     ClearAllSelection(Items);
                     ClearAllSelection(ProjectTreeItems);
                     ClearAllSelection(PlotFolderItems);
-                    foreach (var item in PlotFileListItems) item.IsChecked = false; // 清除列表勾选
+
+                    // 2. 【核心修复】清除“项目工作台”右侧列表的勾选 (新增)
+                    if (ProjectFileListItems != null)
+                    {
+                        foreach (var item in ProjectFileListItems) item.IsChecked = false;
+                    }
+
+                    // 3. 【核心修复】清除“图纸工作台”右侧列表的勾选 (保留并增加 null 检查)
+                    if (PlotFileListItems != null)
+                    {
+                        foreach (var item in PlotFileListItems) item.IsChecked = false;
+                    }
 
                     clickedItem.IsItemSelected = true;
                     _lastSelectedItem = clickedItem;
@@ -1003,58 +1067,45 @@ namespace CadAtlasManager
         // =================================================================
         private void MenuItem_Zip_Click(object sender, RoutedEventArgs e)
         {
+            // 1. 获取选中项：优先取勾选的，没勾选取选中的
             var selectedItems = GetAllSelectedItems();
-            var contextItem = GetSelectedItem();
-            if (contextItem != null && !contextItem.IsItemSelected)
-            {
-                selectedItems.Clear();
-                selectedItems.Add(contextItem);
-            }
-
             if (selectedItems.Count == 0)
             {
-                MessageBox.Show("请先选择要打包的文件或文件夹。");
-                return;
+                var current = GetSelectedItem();
+                if (current != null) selectedItems.Add(current);
             }
 
-            string defaultPath = Path.GetDirectoryName(selectedItems[0].FullPath);
-            string defaultName = $"打包_{DateTime.Now:yyyyMMdd_HHmm}.zip";
+            if (selectedItems.Count == 0) return;
 
-            // 使用自定义弹窗 (ZipSaveDialog - 现在位于 CadAtlasManager.UI 命名空间)
+            // 2. 确定保存路径
+            string firstPath = selectedItems[0].FullPath;
+            string defaultPath = Directory.Exists(firstPath) ? firstPath : Path.GetDirectoryName(firstPath);
+
+            string defaultName = $"打包_{DateTime.Now:yyyyMMdd_HHmm}.zip"; // 这行一定要保留！
             var dlg = new ZipSaveDialog(defaultPath, defaultName);
 
             if (dlg.ShowDialog() == true)
             {
-                string targetDir = dlg.SelectedPath;
-                string fileName = dlg.FileName;
-
-                if (!fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) fileName += ".zip";
-                string zipFullPath = Path.Combine(targetDir, fileName);
-
+                string zipFullPath = Path.Combine(dlg.SelectedPath, dlg.FileName);
                 try
                 {
-                    if (File.Exists(zipFullPath))
-                    {
-                        if (MessageBox.Show($"文件 {fileName} 已存在，是否覆盖？", "确认", MessageBoxButton.YesNo) != MessageBoxResult.Yes)
-                            return;
-                        File.Delete(zipFullPath);
-                    }
-
                     using (ZipArchive archive = ZipFile.Open(zipFullPath, ZipArchiveMode.Create))
                     {
                         foreach (var item in selectedItems)
                         {
-                            if (item.Type == ExplorerItemType.File) archive.CreateEntryFromFile(item.FullPath, item.Name);
-                            else AddFolderToZip(archive, item.FullPath, item.Name);
+                            if (item.Type == ExplorerItemType.File)
+                                archive.CreateEntryFromFile(item.FullPath, item.Name);
+                            else
+                                AddFolderToZip(archive, item.FullPath, item.Name); // 递归打包文件夹
                         }
                     }
-
-                    if (MessageBox.Show("打包成功！是否打开所在文件夹？", "完成", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+                    // 3. 恢复提示信息与一键打开功能
+                    if (MessageBox.Show("打包成功！是否打开所在文件夹？", "完成", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
                     {
-                        Process.Start("explorer.exe", "/select,\"" + zipFullPath + "\"");
+                        Process.Start("explorer.exe", $"/select,\"{zipFullPath}\"");
                     }
                 }
-                catch (System.Exception ex) { MessageBox.Show("打包失败: " + ex.Message); }
+                catch (Exception ex) { MessageBox.Show("打包失败: " + ex.Message); }
             }
         }
 
@@ -1068,9 +1119,21 @@ namespace CadAtlasManager
 
         private void MenuItem_InsertBlock_Click(object sender, RoutedEventArgs e)
         {
+            // GetAllSelectedItems 现在会收集 ProjectFileListItems 中 IsChecked 为 true 的项
             var items = GetAllSelectedItems();
-            if (items.Count == 0 && GetSelectedItem() != null) items.Add(GetSelectedItem());
-            foreach (var item in items) if (item.Type == ExplorerItemType.File && (item.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))) CadService.InsertDwgAsBlock(item.FullPath);
+            if (items.Count == 0)
+            {
+                var current = GetSelectedItem();
+                if (current != null) items.Add(current);
+            }
+
+            foreach (var item in items)
+            {
+                if (item.Type == ExplorerItemType.File && item.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
+                {
+                    CadService.InsertDwgAsBlock(item.FullPath); //
+                }
+            }
         }
 
         private void LoadConfig()
@@ -1092,22 +1155,32 @@ namespace CadAtlasManager
         private void ClearAllSelection(ObservableCollection<FileSystemItem> items) { if (items == null) return; foreach (var i in items) { i.IsItemSelected = false; ClearAllSelection(i.Children); } }
         private List<FileSystemItem> GetAllSelectedItems()
         {
-            var l = new List<FileSystemItem>();
-            CollectSelected(Items, l);
-            CollectSelected(ProjectTreeItems, l);
+            var list = new List<FileSystemItem>();
 
-            // --- 修改开始 ---
-            CollectSelected(PlotFolderItems, l);   // 收集左侧树选中项
+            // 获取当前选中的选项卡索引：0-资料库, 1-项目, 2-图纸
+            int tabIndex = MainTabControl.SelectedIndex;
 
-            // 收集右侧列表的勾选项 (注意：列表用的是 IsChecked 属性，或者 DataGrid 的 SelectedItems，这里兼容处理)
-            // 假设我们主要依赖复选框 IsChecked
-            foreach (var item in PlotFileListItems)
+            if (tabIndex == 0)
             {
-                if (item.IsChecked || item.IsItemSelected) l.Add(item);
+                // 仅收集资料库选中项
+                CollectSelected(Items, list);
             }
-            // --- 修改结束 ---
+            else if (tabIndex == 1)
+            {
+                // 仅收集项目工作台选中项
+                CollectSelected(ProjectTreeItems, list);
+                foreach (var item in ProjectFileListItems)
+                    if (item.IsChecked || item.IsItemSelected) list.Add(item);
+            }
+            else if (tabIndex == 2)
+            {
+                // 仅收集图纸工作台选中项
+                CollectSelected(PlotFolderItems, list);
+                foreach (var item in PlotFileListItems)
+                    if (item.IsChecked || item.IsItemSelected) list.Add(item);
+            }
 
-            return l;
+            return list;
         }
         private void CollectSelected(ObservableCollection<FileSystemItem> s, List<FileSystemItem> r) { if (s == null) return; foreach (var i in s) { if (i.IsItemSelected) r.Add(i); CollectSelected(i.Children, r); } }
         private void SelectRange(ObservableCollection<FileSystemItem> root, FileSystemItem s, FileSystemItem e) { var l = new List<FileSystemItem>(); FlattenTree(root, l); int i1 = l.IndexOf(s), i2 = l.IndexOf(e); if (i1 != -1 && i2 != -1) for (int i = Math.Min(i1, i2); i <= Math.Max(i1, i2); i++) l[i].IsItemSelected = true; }
@@ -1446,26 +1519,57 @@ namespace CadAtlasManager
         private void ProjectTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { _dragStartPoint = e.GetPosition(null); var t = GetTreeViewItemUnderMouse(e.OriginalSource as DependencyObject); if (t != null) _draggedItem = t.DataContext as FileSystemItem; OnTreeItemClick(sender, e); }
         private void ProjectTree_MouseMove(object sender, MouseEventArgs e) { if (e.LeftButton == MouseButtonState.Pressed && _draggedItem != null) { var diff = _dragStartPoint - e.GetPosition(null); if (Math.Abs(diff.X) > SystemParameters.MinimumHorizontalDragDistance || Math.Abs(diff.Y) > SystemParameters.MinimumVerticalDragDistance) { var s = GetAllSelectedItems(); if (!s.Contains(_draggedItem)) { s.Clear(); s.Add(_draggedItem); } DataObject d = new DataObject(DataFormats.FileDrop, s.Select(i => i.FullPath).ToArray()); DragDrop.DoDragDrop(ProjectTree, d, DragDropEffects.Copy | DragDropEffects.Move); _draggedItem = null; } } }
         private void MenuItem_Open_Click(object sender, RoutedEventArgs e) { var i = GetSelectedItem(); if (i != null && i.Type == ExplorerItemType.File) ExecuteFileAction(i); }
+        // 更新获取选中项的逻辑，确保 DataGrid 里的文件优先级最高
         private FileSystemItem GetSelectedItem()
         {
-            if (ProjectTree.IsVisible && ProjectTree.SelectedItem != null) return ProjectTree.SelectedItem as FileSystemItem;
+            int tabIndex = MainTabControl.SelectedIndex;
 
-            // --- 修改开始 ---
-            // 优先检查右侧文件列表的选中项
-            if (PlotFileList.SelectedItem != null) return PlotFileList.SelectedItem as FileSystemItem;
-            // 其次检查左侧文件夹树的选中项
-            if (PlotFolderTree.SelectedItem != null) return PlotFolderTree.SelectedItem as FileSystemItem;
-            // --- 修改结束 ---
-
-            if (_lastSelectedItem != null && _lastSelectedItem.IsItemSelected) return _lastSelectedItem;
-            return FileTree.SelectedItem as FileSystemItem;
+            switch (tabIndex)
+            {
+                case 0: // 资料图集库
+                    return FileTree.SelectedItem as FileSystemItem;
+                case 1: // 项目工作台
+                    if (ProjectFileList.SelectedItem != null) return ProjectFileList.SelectedItem as FileSystemItem;
+                    return ProjectTree.SelectedItem as FileSystemItem;
+                case 2: // 图纸工作台
+                    if (PlotFileList.SelectedItem != null) return PlotFileList.SelectedItem as FileSystemItem;
+                    return PlotFolderTree.SelectedItem as FileSystemItem;
+                default:
+                    return _lastSelectedItem;
+            }
         }
         private void MenuItem_NewFolder_Click(object sender, RoutedEventArgs e) { var i = GetSelectedItem(); if (i != null && i.Type == ExplorerItemType.Folder) { Directory.CreateDirectory(Path.Combine(i.FullPath, "新建文件夹")); RefreshProjectTree(); } }
-        private void MenuItem_Expand_Click(object sender, RoutedEventArgs e) { var i = GetSelectedItem(); if (i != null) SetExpansion(i, true); }
-        private void MenuItem_Collapse_Click(object sender, RoutedEventArgs e) { var i = GetSelectedItem(); if (i != null) SetExpansion(i, false); }
-        private void SetExpansion(FileSystemItem i, bool e) { i.IsExpanded = e; foreach (var c in i.Children) if (c.Type == ExplorerItemType.Folder) SetExpansion(c, e); }
+        private void MenuItem_Expand_Click(object sender, RoutedEventArgs e)
+        {
+            // 强制获取 TreeView 的选中项，而不是 DataGrid 的
+            FileSystemItem item = ProjectTree.SelectedItem as FileSystemItem ?? GetSelectedItem();
+            if (item != null) SetExpansion(item, true);
+        }
+        private void MenuItem_Collapse_Click(object sender, RoutedEventArgs e)
+        {
+            FileSystemItem item = ProjectTree.SelectedItem as FileSystemItem ?? GetSelectedItem();
+            if (item != null) SetExpansion(item, false);
+        }
+        // 确保递归逻辑能穿透到所有文件夹层级
+        private void SetExpansion(FileSystemItem i, bool e)
+        {
+            i.IsExpanded = e;
+            // 递归处理所有子项
+            foreach (var c in i.Children)
+            {
+                if (c.Type == ExplorerItemType.Folder)
+                    SetExpansion(c, e);
+            }
+        }
         private void FileTree_MouseDoubleClick(object sender, MouseButtonEventArgs e) { if (GetClickedItem(e) is FileSystemItem i && i.Type == ExplorerItemType.File) ExecuteFileAction(i); }
-        private void ProjectTree_MouseDoubleClick(object sender, MouseButtonEventArgs e) { if (GetClickedItem(e) is FileSystemItem i && i.Type == ExplorerItemType.File) OpenFileSmart(i.FullPath, "Edit"); }
+        // 项目工作台的目录树双击：也强制 Edit
+        private void ProjectTree_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (GetClickedItem(e) is FileSystemItem item && item.Type == ExplorerItemType.File)
+            {
+                OpenFileSmart(item.FullPath, "Edit");
+            }
+        }
         private void PlotTree_MouseDoubleClick(object sender, MouseButtonEventArgs e) { if (GetClickedItem(e) is FileSystemItem i && i.Type == ExplorerItemType.File) Process.Start(new ProcessStartInfo(i.FullPath) { UseShellExecute = true }); }
 
         // [修改文件: UI/AtlasView.xaml.cs] 请将此方法添加到类中
@@ -1479,17 +1583,19 @@ namespace CadAtlasManager
             {
                 // 1. 【核心修复】如果点击的项已经是选中状态，则保留多选，什么都不做
                 // 这样右键菜单就会基于当前的多选列表弹出来
-                if (clickedItem.IsItemSelected)
+                // 2. 【核心修复】清除“项目工作台”右侧列表的勾选
+                if (ProjectFileListItems != null)
                 {
-                    return;
+                    foreach (var item in ProjectFileListItems) item.IsChecked = false;
                 }
 
-                // 2. 如果点击的项没被选中，则按标准流程：清除旧选择 -> 选中当前项
-                ClearAllSelection(Items);
-                ClearAllSelection(ProjectTreeItems);
-                ClearAllSelection(PlotFolderItems);
-                foreach (var item in PlotFileListItems) item.IsChecked = false; // 清除列表勾选
+                // 3. 【保留】清除“图纸工作台”右侧列表的勾选
+                if (PlotFileListItems != null)
+                {
+                    foreach (var item in PlotFileListItems) item.IsChecked = false;
+                }
 
+                // 4. 执行当前项的单选操作
                 clickedItem.IsItemSelected = true;
                 _lastSelectedItem = clickedItem;
             }
