@@ -35,7 +35,8 @@ namespace CadAtlasManager
         private List<string> _loadedAtlasFolders = new List<string>();
         private ProjectItem _activeProject = null;
         private readonly string _versionInfo = "CAD图集管理器 v3.6 (Refactored)\n\n更新：\n1. 代码结构重构优化\n2. 准备接入新功能";
-
+        private FileSystemItem _currentActiveItem = null;
+        private FileSystemItem _lastActiveProjectItem = null; // 记录当前变红的文件夹
         // 放在 AtlasView 类内部
         // 1. 扩展状态枚举
         private enum PdfStatus { Latest, Expired, MissingSource, NeedRemerge, Unknown }
@@ -85,12 +86,48 @@ namespace CadAtlasManager
             var folder = e.NewValue as FileSystemItem;
             LoadProjectFileListItems(folder);
         }
+        private void UpdateActiveFolderHighlight(FileSystemItem newItem)
+        {
+            // 1. 如果之前有激活项，先恢复原状
+            if (_currentActiveItem != null)
+            {
+                _currentActiveItem.IsActive = false;
+            }
 
+            // 2. 设置新项为激活状态
+            if (newItem != null && newItem.IsDirectory)
+            {
+                newItem.IsActive = true;
+                _currentActiveItem = newItem;
+            }
+        }
         private void LoadProjectFileListItems(FileSystemItem folder)
         {
             if (folder == null) return;
-            _currentProjectFolderPath = folder.FullPath; // 关键：记录当前路径
 
+            // --- 【核心修复：同步左侧树的状态】 ---
+            // 1. 在树中找到对应的真实节点对象 (防止是从明细列表传入的新实例)
+            FileSystemItem treeNode = FindItemInTree(ProjectTreeItems, folder.FullPath);
+
+            // 2. 状态重置：清除树中所有项的“蓝色底”和“红字”
+            // 这解决了“B文件夹蓝底不消失”以及“打包路径不准”的问题
+            ClearAllSelection(ProjectTreeItems);
+            if (_lastActiveProjectItem != null)
+            {
+                _lastActiveProjectItem.IsActive = false;
+            }
+
+            // 3. 状态激活：如果找到了树节点，同步设置它的状态
+            if (treeNode != null)
+            {
+                treeNode.IsActive = true;       // 变为红字
+                treeNode.IsItemSelected = true; // 变为蓝色底 (确保打包逻辑锁定到此路径)
+                treeNode.IsExpanded = true;     // 确保父级是展开的
+                _lastActiveProjectItem = treeNode;
+            }
+            // ------------------------------------
+
+            _currentProjectFolderPath = folder.FullPath;
             ProjectFileListItems.Clear();
             if (!Directory.Exists(folder.FullPath)) return;
 
@@ -98,7 +135,7 @@ namespace CadAtlasManager
             {
                 string filter = (CbProjectFileType.SelectedItem as ComboBoxItem)?.Content.ToString();
 
-                // 1. 加载子文件夹 (解决点击父级显示子文件夹的问题)
+                // 加载子文件夹
                 foreach (var dir in Directory.GetDirectories(folder.FullPath))
                 {
                     if (new DirectoryInfo(dir).Attributes.HasFlag(FileAttributes.Hidden)) continue;
@@ -106,7 +143,7 @@ namespace CadAtlasManager
                     ProjectFileListItems.Add(item);
                 }
 
-                // 2. 加载文件
+                // 加载文件
                 foreach (var file in Directory.GetFiles(folder.FullPath))
                 {
                     string ext = Path.GetExtension(file).ToLower();
@@ -284,18 +321,12 @@ namespace CadAtlasManager
             {
                 if (item.Type == ExplorerItemType.File)
                 {
-                    // 如果是文件：始终以 Edit 模式打开
                     OpenFileSmart(item.FullPath, "Edit");
                 }
                 else if (item.Type == ExplorerItemType.Folder)
                 {
-                    // 如果是文件夹：双击打开下一级目录
-                    // 1. 加载此文件夹的内容到右侧明细列表
+                    // 这里会自动触发上面修改后的同步逻辑，让文件夹变红
                     LoadProjectFileListItems(item);
-
-                    // 2. (进阶建议) 同步左侧树状目录的展开与选中状态
-                    // 这样可以确保左右两边显示的一致性
-                    SyncTreeSelection(ProjectTreeItems, item.FullPath);
                 }
             }
         }
@@ -1342,9 +1373,15 @@ namespace CadAtlasManager
 
             // 2. 确定保存路径
             string firstPath = selectedItems[0].FullPath;
-            string defaultPath = Directory.Exists(firstPath) ? firstPath : Path.GetDirectoryName(firstPath);
 
-            string defaultName = $"打包_{DateTime.Now:yyyyMMdd_HHmm}.zip"; // 这行一定要保留！
+            // 【关键修改】：不再判断是否为文件夹，统一取父目录 Path.GetDirectoryName
+            // 这样如果打包文件夹 A，zip 会默认出现在 A 的旁边，而不是 A 的里面
+            string defaultPath = Path.GetDirectoryName(firstPath);
+
+            // 防御性处理：如果是根目录，则维持原样
+            if (string.IsNullOrEmpty(defaultPath)) defaultPath = firstPath;
+
+            string defaultName = $"打包_{DateTime.Now:yyyyMMdd_HHmm}.zip";
             var dlg = new ZipSaveDialog(defaultPath, defaultName);
 
             if (dlg.ShowDialog() == true)
@@ -1352,6 +1389,14 @@ namespace CadAtlasManager
                 string zipFullPath = Path.Combine(dlg.SelectedPath, dlg.FileName);
                 try
                 {
+                    // 如果目标文件已存在，先尝试删除（防止占用报错）
+                    if (File.Exists(zipFullPath))
+                    {
+                        if (MessageBox.Show("压缩包已存在，是否覆盖？", "提示", MessageBoxButton.YesNo) == MessageBoxResult.No)
+                            return;
+                        File.Delete(zipFullPath);
+                    }
+
                     using (ZipArchive archive = ZipFile.Open(zipFullPath, ZipArchiveMode.Create))
                     {
                         foreach (var item in selectedItems)
@@ -1359,10 +1404,10 @@ namespace CadAtlasManager
                             if (item.Type == ExplorerItemType.File)
                                 archive.CreateEntryFromFile(item.FullPath, item.Name);
                             else
-                                AddFolderToZip(archive, item.FullPath, item.Name); // 递归打包文件夹
+                                AddFolderToZip(archive, item.FullPath, item.Name);
                         }
                     }
-                    // 3. 恢复提示信息与一键打开功能
+
                     if (MessageBox.Show("打包成功！是否打开所在文件夹？", "完成", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
                     {
                         Process.Start("explorer.exe", $"/select,\"{zipFullPath}\"");

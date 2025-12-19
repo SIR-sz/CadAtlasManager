@@ -9,7 +9,6 @@ namespace CadAtlasManager.Models
 
     public class FileSystemItem : INotifyPropertyChanged
     {
-        // ... [保留原有属性 Name, FullPath, Type, TypeIcon, IsRoot, FontWeight] ...
         public string Name { get; set; }
         public string FullPath { get; set; }
         public ExplorerItemType Type { get; set; }
@@ -17,7 +16,17 @@ namespace CadAtlasManager.Models
         public bool IsRoot { get; set; } = false;
         public FontWeight FontWeight { get; set; } = FontWeights.Normal;
 
-        // ... [保留 IsExpanded, IsItemSelected, HasRemark] ...
+        // --- 新增：属性快捷判断 ---
+        public bool IsDirectory => Type == ExplorerItemType.Folder;
+
+        // --- 新增：激活状态（用于文字变红） ---
+        private bool _isActive;
+        public bool IsActive
+        {
+            get => _isActive;
+            set { if (_isActive != value) { _isActive = value; OnPropertyChanged("IsActive"); } }
+        }
+
         private bool _isExpanded;
         public bool IsExpanded
         {
@@ -39,7 +48,6 @@ namespace CadAtlasManager.Models
             set { if (_hasRemark != value) { _hasRemark = value; OnPropertyChanged("HasRemark"); } }
         }
 
-        // --- 新增：复选框状态 ---
         private bool _isChecked;
         public bool IsChecked
         {
@@ -47,10 +55,8 @@ namespace CadAtlasManager.Models
             set { if (_isChecked != value) { _isChecked = value; OnPropertyChanged("IsChecked"); } }
         }
 
-        // --- 新增：创建日期 ---
         public string CreationDate { get; set; }
 
-        // ... [保留 VersionStatus, StatusColor 等] ...
         private string _versionStatus;
         public string VersionStatus
         {

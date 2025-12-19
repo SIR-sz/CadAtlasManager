@@ -61,7 +61,19 @@
                                Visibility="{Binding HasRemark, Converter={StaticResource BoolToVis}}"
                                Margin="0,0,-2,-2" Background="White"/>
                 </Grid>
-                <TextBlock Text="{Binding Name}" FontWeight="{Binding FontWeight}" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding Name}" FontWeight="{Binding FontWeight}" VerticalAlignment="Center">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="#333333"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                    <Setter Property="Foreground" Value="Red"/>
+                                    <Setter Property="FontWeight" Value="Bold"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
                 <TextBlock Text="{Binding VersionStatus}" 
                            Foreground="{Binding StatusColor}" 
                            FontWeight="Bold" 
