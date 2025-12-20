@@ -1,5 +1,7 @@
 ﻿using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+// 给 AutoCAD 的 Application 起个别名，防止和 WPF 冲突
+using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Geometry;
 using Autodesk.AutoCAD.PlottingServices;
 using Autodesk.AutoCAD.Runtime;
@@ -8,7 +10,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-// 给 AutoCAD 的 Application 起个别名，防止和 WPF 冲突
 
 namespace CadAtlasManager
 {
@@ -507,43 +508,105 @@ namespace CadAtlasManager
 
             using (doc.LockDocument())
             {
+                // 1. 弹出模式选择关键字
+                PromptKeywordOptions pko = new PromptKeywordOptions("\n请选择拾取模式 [手动框选矩形(W) / 框选块参照图框(B)] <W>: ");
+                pko.Keywords.Add("W", "W", "手动框选矩形(W)");
+                pko.Keywords.Add("B", "B", "框选块参照图框(B)");
+                pko.AllowNone = true;
+
+                var pkr = ed.GetKeywords(pko);
+                // 检查状态，如果用户取消则返回
+                if (pkr.Status != PromptStatus.OK && pkr.Status != PromptStatus.None) return 0;
+
+                // 【关键修正点】：将 pkr.StringGlobal 修改为 pkr.StringResult
+                string mode = (pkr.Status == PromptStatus.None || pkr.StringResult == "W") ? "W" : "B";
+
                 using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
                 {
                     var layout = GetLayoutFromBtrId(tr, doc.Database, doc.Database.CurrentSpaceId);
                     if (layout == null) return 0;
 
-                    while (true)
+                    if (mode == "W")
                     {
-                        var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [回车结束]: ");
-                        if (ppr1.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK) break;
-
-                        var ppr2 = ed.GetCorner("\n指定第二个角点: ", ppr1.Value);
-                        if (ppr2.Status != Autodesk.AutoCAD.EditorInput.PromptStatus.OK) break;
-
-                        var tb = new TitleBlockInfo
+                        // --- 模式 A：传统手动框选矩形 ---
+                        while (true)
                         {
-                            Extents = new Extents3d(
-                                new Point3d(Math.Min(ppr1.Value.X, ppr2.Value.X), Math.Min(ppr1.Value.Y, ppr2.Value.Y), 0),
-                                new Point3d(Math.Max(ppr1.Value.X, ppr2.Value.X), Math.Max(ppr1.Value.Y, ppr2.Value.Y), 0)
-                            )
-                        };
+                            var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [回车结束]: ");
+                            if (ppr1.Status != PromptStatus.OK) break;
 
-                        // 修改处：移除“_手动_”字样，保持与批量打印一致的命名规则
-                        string dwgFileName = Path.GetFileNameWithoutExtension(dwgPath);
-                        string pdfName = $"{dwgFileName}_{(successCount + 1):D2}.pdf";
-                        string fullPdfPath = Path.Combine(outputDir, pdfName);
+                            var ppr2 = ed.GetCorner("\n指定第二个角点: ", ppr1.Value);
+                            if (ppr2.Status != PromptStatus.OK) break;
 
-                        if (PrintExtent(doc, layout, tb, config, fullPdfPath))
+                            var tb = new TitleBlockInfo
+                            {
+                                Extents = new Extents3d(
+                                    new Point3d(Math.Min(ppr1.Value.X, ppr2.Value.X), Math.Min(ppr1.Value.Y, ppr2.Value.Y), 0),
+                                    new Point3d(Math.Max(ppr1.Value.X, ppr2.Value.X), Math.Max(ppr1.Value.Y, ppr2.Value.Y), 0)
+                                )
+                            };
+
+                            if (ExecuteSinglePrint(doc, layout, tb, config, outputDir, dwgPath, ++successCount))
+                                PlotMetaManager.SavePlotRecord(dwgPath, Path.Combine(outputDir, $"{Path.GetFileNameWithoutExtension(dwgPath)}_{successCount:D2}.pdf"));
+                        }
+                    }
+                    else
+                    {
+                        // --- 模式 B：框选参照图框 (块参照或外部参照) ---
+                        PromptSelectionOptions pso = new PromptSelectionOptions();
+                        pso.MessageForAdding = "\n请选择图框对应的块参照或外部参照 (可多选): ";
+
+                        SelectionFilter filter = new SelectionFilter(new TypedValue[] {
+        new TypedValue((int)DxfCode.Start, "INSERT")
+    });
+
+                        var psr = ed.GetSelection(pso, filter);
+                        if (psr.Status == PromptStatus.OK)
                         {
-                            successCount++;
-                            // 保存元数据关联，确保图纸工作台不丢失源文件
-                            PlotMetaManager.SavePlotRecord(dwgPath, fullPdfPath);
+                            var pickedBlocks = new List<TitleBlockInfo>();
+                            foreach (SelectedObject so in psr.Value)
+                            {
+                                BlockReference br = tr.GetObject(so.ObjectId, OpenMode.ForRead) as BlockReference;
+                                if (br == null) continue;
+
+                                // --- 在这里添加 try-catch 保护 ---
+                                try
+                                {
+                                    pickedBlocks.Add(new TitleBlockInfo
+                                    {
+                                        BlockName = br.Name,
+                                        Extents = br.GeometricExtents // 这里最容易因为空块报错
+                                    });
+                                }
+                                catch
+                                {
+                                    // 如果块没有几何边界，打印一行提示并跳过它，防止程序崩溃
+                                    ed.WriteMessage($"\n[提示] 块 {br.Name} 无法获取有效边界，已跳过。");
+                                }
+                                // --------------------------------
+                            }
+
+                            // 按照配置的顺序（横向/纵向）对选中的块进行排序，确保页码顺序正确
+                            var sortedBlocks = SortTitleBlocks(pickedBlocks, config.OrderType);
+
+                            foreach (var tb in sortedBlocks)
+                            {
+                                if (ExecuteSinglePrint(doc, layout, tb, config, outputDir, dwgPath, ++successCount))
+                                    PlotMetaManager.SavePlotRecord(dwgPath, Path.Combine(outputDir, $"{Path.GetFileNameWithoutExtension(dwgPath)}_{successCount:D2}.pdf"));
+                            }
                         }
                     }
                     tr.Commit();
                 }
             }
             return successCount;
+        }
+        // 辅助方法：统一执行单页打印操作
+        private static bool ExecuteSinglePrint(Document doc, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, string outputDir, string dwgPath, int index)
+        {
+            string dwgFileName = Path.GetFileNameWithoutExtension(dwgPath);
+            string pdfName = $"{dwgFileName}_{index:D2}.pdf";
+            string fullPdfPath = Path.Combine(outputDir, pdfName);
+            return PrintExtent(doc, layout, tb, config, fullPdfPath);
         }
     }
 }

@@ -1019,7 +1019,7 @@ namespace CadAtlasManager
                             var acDoc = AcApp.DocumentManager.Open(failItem.FilePath, false);
                             string plotDir = Path.Combine(Path.GetDirectoryName(failItem.FilePath), "_Plot");
 
-                            MessageBox.Show($"正在手动拾取文件：\n{failItem.FileName}\n\n请在 CAD 中连续框选，按回车结束该文件。");
+                            MessageBox.Show($"正在手动拾取文件：\n{failItem.FileName}\n\n请查看 CAD 命令行选择【手动框选】或【选择图框块】模式进行操作。");
                             CadService.ManualPickAndPlot(acDoc, plotDir, config);
 
                             acDoc.CloseAndDiscard();
