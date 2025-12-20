@@ -55,10 +55,12 @@ namespace CadAtlasManager
 
         private string _currentPlotFolderPath = ""; // 追踪图纸工作台当前显示的文件夹路径
 
+        private List<string> _projectInternalClipboard = new List<string>();// 专门用于项目工作台内部流转的剪贴板
+
         private readonly List<string> _allowedExtensions = new List<string>
         {
             ".dwg", ".dxf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".wps", ".pdf", ".txt",
-            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".mp4", ".avi", ".mov",
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".mp4", ".avi", ".mov", //
             ".zip", ".rar", ".7z"
         };
 
@@ -160,7 +162,7 @@ namespace CadAtlasManager
             catch { }
         }
         // [修改方法：RefreshPlotTree]
-        // [修改方法: RefreshPlotTree]
+
         private void RefreshPlotTree()
         {
             if (_activeProject == null || !Directory.Exists(_activeProject.Path)) return;
@@ -206,7 +208,195 @@ namespace CadAtlasManager
             // 3. 恢复状态
             RestorePlotTreeState(PlotFolderItems, expandedPaths, _currentPlotFolderPath);
         }
+        private void ProjectInternal_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (MainTabControl.SelectedIndex != 1) return;
 
+            // Ctrl + C (复制) 或 Ctrl + X (剪切)
+            if ((e.Key == Key.C || e.Key == Key.X) && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                var selected = GetAllSelectedItems();
+                if (selected.Count > 0)
+                {
+                    var paths = new System.Collections.Specialized.StringCollection();
+                    foreach (var item in selected) paths.Add(item.FullPath);
+
+                    // 构造数据对象
+                    DataObject data = new DataObject();
+                    data.SetFileDropList(paths);
+
+                    // 如果是剪切，设置 Preferred DropEffect 为 Move (这是 Windows 标准做法)
+                    if (e.Key == Key.X)
+                    {
+                        // 0x2 表示 Move (剪切), 0x5 表示 Copy (复制)
+                        byte[] moveEffect = new byte[] { 2, 0, 0, 0 };
+                        MemoryStream dropEffect = new MemoryStream(moveEffect);
+                        data.SetData("Preferred DropEffect", dropEffect);
+                    }
+
+                    // 放入系统剪贴板：这样你就可以在微信里直接 Ctrl+V 了
+                    Clipboard.SetDataObject(data);
+                }
+                e.Handled = true;
+            }
+            // Ctrl + V (粘贴)
+            else if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                ExecuteExternalCompatiblePaste();
+                e.Handled = true;
+            }
+        }
+        private void ExecuteExternalCompatiblePaste()
+        {
+            // 1. 从系统剪贴板获取文件列表
+            if (!Clipboard.ContainsFileDropList()) return;
+            var filePaths = Clipboard.GetFileDropList();
+
+            // 2. 确定目标目录
+            string targetDir = _currentProjectFolderPath;
+            if (string.IsNullOrEmpty(targetDir) || !Directory.Exists(targetDir))
+            {
+                if (_activeProject != null) targetDir = _activeProject.Path;
+                else return;
+            }
+
+            // 3. 检查当前剪贴板是否是“剪切”操作
+            bool isMove = false;
+            IDataObject data = Clipboard.GetDataObject();
+            if (data.GetDataPresent("Preferred DropEffect"))
+            {
+                using (MemoryStream ms = (MemoryStream)data.GetData("Preferred DropEffect"))
+                {
+                    if (ms.ReadByte() == 2) isMove = true;
+                }
+            }
+
+            Mouse.OverrideCursor = Cursors.Wait;
+            try
+            {
+                foreach (string sourcePath in filePaths)
+                {
+                    if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath)) continue;
+
+                    string fileName = Path.GetFileName(sourcePath);
+                    string destPath = Path.Combine(targetDir, fileName);
+
+                    // 冲突检查：同名则自动重命名
+                    if (File.Exists(destPath) || Directory.Exists(destPath))
+                    {
+                        destPath = GenerateInternalUniquePath(targetDir, fileName);
+                    }
+
+                    // 4. 执行物理操作
+                    if (File.Exists(sourcePath))
+                    {
+                        if (isMove) File.Move(sourcePath, destPath); // 剪切：移动文件
+                        else File.Copy(sourcePath, destPath);        // 复制：拷贝文件
+
+                        // 同步备注
+                        string remark = RemarkManager.GetRemark(sourcePath);
+                        if (!string.IsNullOrEmpty(remark)) RemarkManager.SaveRemark(destPath, remark);
+                    }
+                    else if (Directory.Exists(sourcePath))
+                    {
+                        if (targetDir.StartsWith(sourcePath, StringComparison.OrdinalIgnoreCase)) continue;
+
+                        if (isMove) Directory.Move(sourcePath, destPath);
+                        else CopyProjectDirInternal(sourcePath, destPath);
+                    }
+                }
+
+                // 5. 如果是剪切，粘贴完后清空剪贴板（防止重复移动报错）
+                if (isMove) Clipboard.Clear();
+            }
+            catch (Exception ex) { MessageBox.Show("粘贴操作失败: " + ex.Message); }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                RefreshProjectTree();
+            }
+        }
+        private void ExecuteInternalProjectPaste()
+        {
+            if (_projectInternalClipboard == null || _projectInternalClipboard.Count == 0) return;
+
+            // 确定目标目录：当前选中的文件夹路径或项目根目录
+            string targetDir = _currentProjectFolderPath;
+            if (string.IsNullOrEmpty(targetDir) || !Directory.Exists(targetDir))
+            {
+                if (_activeProject != null) targetDir = _activeProject.Path;
+                else return;
+            }
+
+            Mouse.OverrideCursor = Cursors.Wait;
+            try
+            {
+                foreach (string sourcePath in _projectInternalClipboard)
+                {
+                    if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath)) continue;
+
+                    string fileName = Path.GetFileName(sourcePath);
+                    string destPath = Path.Combine(targetDir, fileName);
+
+                    // 自动重命名逻辑：如果目标已存在，生成“ - 副本”后缀
+                    if (File.Exists(destPath) || Directory.Exists(destPath))
+                    {
+                        destPath = GenerateInternalUniquePath(targetDir, fileName);
+                    }
+
+                    // 执行物理复制并同步备注
+                    if (File.Exists(sourcePath))
+                    {
+                        File.Copy(sourcePath, destPath);
+                        string remark = RemarkManager.GetRemark(sourcePath);
+                        if (!string.IsNullOrEmpty(remark)) RemarkManager.SaveRemark(destPath, remark);
+                    }
+                    else if (Directory.Exists(sourcePath))
+                    {
+                        // 风险排查：禁止将父文件夹粘贴进自己的子文件夹
+                        if (targetDir.StartsWith(sourcePath, StringComparison.OrdinalIgnoreCase)) continue;
+                        CopyProjectDirInternal(sourcePath, destPath);
+                    }
+                }
+            }
+            catch (Exception ex) { MessageBox.Show("项目内粘贴失败: " + ex.Message); }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                RefreshProjectTree(); // 刷新界面
+            }
+        }
+
+        // 内部使用的唯一路径生成器
+        private string GenerateInternalUniquePath(string folder, string fileName)
+        {
+            string nameOnly = Path.GetFileNameWithoutExtension(fileName);
+            string ext = Path.GetExtension(fileName);
+            int count = 1;
+            string newPath = Path.Combine(folder, $"{nameOnly} - 副本{ext}");
+
+            while (File.Exists(newPath) || Directory.Exists(newPath))
+            {
+                count++;
+                newPath = Path.Combine(folder, $"{nameOnly} - 副本({count}){ext}");
+            }
+            return newPath;
+        }
+
+        // 递归复制文件夹及其备注
+        private void CopyProjectDirInternal(string source, string dest)
+        {
+            Directory.CreateDirectory(dest);
+            foreach (var file in Directory.GetFiles(source))
+            {
+                string dFile = Path.Combine(dest, Path.GetFileName(file));
+                File.Copy(file, dFile);
+                string rem = RemarkManager.GetRemark(file);
+                if (!string.IsNullOrEmpty(rem)) RemarkManager.SaveRemark(dFile, rem);
+            }
+            foreach (var sub in Directory.GetDirectories(source))
+                CopyProjectDirInternal(sub, Path.Combine(dest, Path.GetFileName(sub)));
+        }
         // 专门为图纸树定制的恢复逻辑
         private void RestorePlotTreeState(ObservableCollection<FileSystemItem> nodes, List<string> expandedPaths, string targetPath)
         {
@@ -271,7 +461,7 @@ namespace CadAtlasManager
                 foreach (var file in Directory.GetFiles(folder.FullPath)) //
                 {
                     string ext = Path.GetExtension(file).ToLower();
-                    if (".pdf.jpg.jpeg.png.plt".Contains(ext)) //
+                    if (".pdf.jpg.jpeg.png.plt.tif.tiff".Contains(ext)) //
                     {
                         var item = CreateItem(file, ExplorerItemType.File); //
                         item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm"); //
@@ -1065,8 +1255,8 @@ namespace CadAtlasManager
             try
             {
                 RemarkManager.LoadRemarks(parent.FullPath);
-                // 仅加载 PDF, JPG, PNG, PLT
-                string plotExts = ".pdf.jpg.jpeg.png.plt";
+                // 仅加载 PDF, JPG, PNG, PLT，.tif，tiff
+                string plotExts = ".pdf.jpg.jpeg.png.plt.tif.tiff";
 
                 foreach (var dir in Directory.GetDirectories(parent.FullPath))
                 {
@@ -1308,87 +1498,7 @@ namespace CadAtlasManager
             }
         }
 
-        // =================================================================
-        // 【核心修改】复制移动功能 (单选重命名 / 多选批量备份)
-        // =================================================================
-        private void MenuItem_CopyInPlace_Click(object sender, RoutedEventArgs e)
-        {
-            var selectedItems = GetAllSelectedItems();
 
-            if (selectedItems.Count == 0)
-            {
-                var current = GetSelectedItem();
-                if (current != null) selectedItems.Add(current);
-            }
-
-            var filesToCopy = selectedItems.Where(i => i.Type == ExplorerItemType.File).ToList();
-
-            if (filesToCopy.Count == 0)
-            {
-                MessageBox.Show("请选择至少一个文件进行复制。");
-                return;
-            }
-
-            string defaultPath = Path.GetDirectoryName(filesToCopy[0].FullPath);
-            string defaultName = filesToCopy.Count == 1 ? filesToCopy[0].Name : "";
-
-            // 使用自定义弹窗 (CopyMoveDialog - 现在位于 CadAtlasManager.UI 命名空间)
-            var dlg = new CopyMoveDialog(defaultPath, defaultName, filesToCopy.Count > 1);
-            dlg.Title = filesToCopy.Count == 1 ? $"复制移动 - {filesToCopy[0].Name}" : $"批量复制移动 ({filesToCopy.Count}个文件)";
-
-            if (dlg.ShowDialog() == true)
-            {
-                string targetDir = dlg.SelectedPath;
-                int successCount = 0;
-
-                try
-                {
-                    if (!Directory.Exists(targetDir)) Directory.CreateDirectory(targetDir);
-
-                    if (filesToCopy.Count == 1)
-                    {
-                        // 单选：支持重命名
-                        string sourceFile = filesToCopy[0].FullPath;
-                        string newFileName = dlg.FileName;
-                        string destPath = Path.Combine(targetDir, newFileName);
-
-                        if (File.Exists(destPath))
-                        {
-                            if (MessageBox.Show($"文件 {newFileName} 已存在，是否覆盖？", "冲突", MessageBoxButton.YesNo) != MessageBoxResult.Yes)
-                                return;
-                        }
-
-                        File.Copy(sourceFile, destPath, true);
-
-                        // 同步备注
-                        string remark = RemarkManager.GetRemark(sourceFile);
-                        if (!string.IsNullOrEmpty(remark)) RemarkManager.SaveRemark(destPath, remark);
-
-                        successCount++;
-                    }
-                    else
-                    {
-                        // 多选：批量复制
-                        foreach (var item in filesToCopy)
-                        {
-                            string destPath = Path.Combine(targetDir, item.Name);
-                            if (File.Exists(destPath)) continue;
-
-                            File.Copy(item.FullPath, destPath, true);
-
-                            string remark = RemarkManager.GetRemark(item.FullPath);
-                            if (!string.IsNullOrEmpty(remark)) RemarkManager.SaveRemark(destPath, remark);
-
-                            successCount++;
-                        }
-                    }
-
-                    RefreshProjectTree();
-                    if (successCount > 0) MessageBox.Show($"成功复制 {successCount} 个文件到：\n{targetDir}");
-                }
-                catch (System.Exception ex) { MessageBox.Show("复制失败: " + ex.Message); }
-            }
-        }
 
         // =================================================================
         // 【修改】一键打包功能 (使用自定义 ZipSaveDialog)
@@ -1547,7 +1657,7 @@ namespace CadAtlasManager
         private void SelectRange(ObservableCollection<FileSystemItem> root, FileSystemItem s, FileSystemItem e) { var l = new List<FileSystemItem>(); FlattenTree(root, l); int i1 = l.IndexOf(s), i2 = l.IndexOf(e); if (i1 != -1 && i2 != -1) for (int i = Math.Min(i1, i2); i <= Math.Max(i1, i2); i++) l[i].IsItemSelected = true; }
         private void FlattenTree(ObservableCollection<FileSystemItem> n, List<FileSystemItem> r) { foreach (var node in n) { r.Add(node); if (node.IsExpanded) FlattenTree(node.Children, r); } }
         private TreeViewItem GetTreeViewItemUnderMouse(DependencyObject e) { while (e != null && !(e is TreeViewItem)) e = VisualTreeHelper.GetParent(e); return e as TreeViewItem; }
-        private void MenuItem_CopyInPlace_Click_Legacy(object sender, RoutedEventArgs e) { /* 保留旧逻辑引用防止报错，实际使用新的 CopyMove */ }
+
         private void MenuItem_Remove_Click(object sender, RoutedEventArgs e) { if (FileTree.SelectedItem is FileSystemItem i && i.IsRoot) { _loadedAtlasFolders.Remove(i.FullPath); Items.Remove(i); SaveConfig(); } }
         // [修改方法: BtnRemoveProject_Click]
         private void BtnRemoveProject_Click(object sender, RoutedEventArgs e)
@@ -2142,7 +2252,7 @@ namespace CadAtlasManager
             if (string.IsNullOrEmpty(f) || f == "所有格式") return true;
             if (f == "DWG图纸" && x.Contains("dwg")) return true;
             if (f == "办公文档" && ".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return true;
-            if (f == "图片" && ".jpg.jpeg.png.bmp.gif".Contains(x)) return true;
+            if (f == "图片" && ".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return true;
             if (f == "PDF" && x == ".pdf") return true;
             if (f == "压缩包" && ".zip.rar.7z".Contains(x)) return true;
             return false;
@@ -2151,7 +2261,7 @@ namespace CadAtlasManager
         {
             if (x.Contains("dwg")) return "📐";
             if (".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return "📄";
-            if (".jpg.jpeg.png.bmp.gif".Contains(x)) return "🖼️";
+            if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return "🖼️";
             if (x.Contains("pdf")) return "📕";
             if (".zip.rar.7z".Contains(x)) return "📦";
             return "📃";

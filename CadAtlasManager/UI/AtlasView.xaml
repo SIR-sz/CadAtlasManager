@@ -262,7 +262,9 @@
                         <DockPanel Grid.Column="0">
                             <TextBlock Text="📁 项目目录" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
                             <TreeView Name="ProjectTree" ItemTemplate="{StaticResource FileSystemTemplate}"
-                                      SelectedItemChanged="ProjectTree_SelectedItemChanged" BorderThickness="1" BorderBrush="#eee">
+          SelectedItemChanged="ProjectTree_SelectedItemChanged" 
+          BorderThickness="1" BorderBrush="#eee"
+          PreviewKeyDown="ProjectInternal_KeyDown">
                                 <TreeView.ItemContainerStyle>
                                     <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                                         <Setter Property="ContextMenu" Value="{StaticResource ProjectFolderContextMenu}"/>
@@ -282,10 +284,10 @@
                         <DockPanel Grid.Column="2">
                             <TextBlock Text="📄 文件明细" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
                             <DataGrid Name="ProjectFileList" 
-                                      AutoGenerateColumns="False" CanUserAddRows="False" 
-                                      GridLinesVisibility="Horizontal" Background="White" BorderBrush="#eee"
-                                      SelectionMode="Extended" MouseDoubleClick="ProjectFileList_MouseDoubleClick"
-                                      ContextMenu="{StaticResource ProjectFileContextMenu}">
+          AutoGenerateColumns="False" CanUserAddRows="False" 
+          SelectionMode="Extended" MouseDoubleClick="ProjectFileList_MouseDoubleClick"
+          ContextMenu="{StaticResource ProjectFileContextMenu}"
+          PreviewKeyDown="ProjectInternal_KeyDown">
                                 <DataGrid.ItemContainerStyle>
                                     <Style TargetType="DataGridRow">
                                         <Setter Property="IsSelected" Value="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
