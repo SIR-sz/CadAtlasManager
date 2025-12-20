@@ -463,9 +463,31 @@ namespace CadAtlasManager
             return result;
         }
         // [CadService.cs]
-        // [CadService.cs]
-        // [CadService.cs]
-        // [CadService.cs]
+        /// <summary>
+        /// 启动 CAD 的外部参照附着对话框（针对 DWG）
+        /// </summary>
+        public static void OpenXrefDialog()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            doc.Window.Focus();
+            // 使用 XATTACH 命令
+            doc.SendStringToExecute("_.XATTACH ", true, false, false);
+        }
+
+        /// <summary>
+        /// 启动 CAD 的图像附着对话框（针对图片）
+        /// </summary>
+        public static void OpenImageAttachDialog()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            doc.Window.Focus();
+            // 使用 IMAGEATTACH 命令，这是专门用于图片的附着窗口
+            doc.SendStringToExecute("_.IMAGEATTACH ", true, false, false);
+        }
+
+
         public static int ManualPickAndPlot(Document doc, string outputDir, BatchPlotConfig config)
         {
             var ed = doc.Editor;

@@ -1276,7 +1276,39 @@ namespace CadAtlasManager
             }
             catch { }
         }
+        // 在 AtlasView.xaml.cs 中添加
+        // [AtlasView.xaml.cs]
+        private void MenuItem_InsertXref_Click(object sender, RoutedEventArgs e)
+        {
+            // 1. 获取选中的文件
+            var item = GetSelectedItem();
 
+            if (item != null && item.Type == ExplorerItemType.File)
+            {
+                string fullPath = item.FullPath;
+                string ext = System.IO.Path.GetExtension(fullPath).ToLower();
+
+                // 2. 将文件路径复制到系统剪贴板，方便用户粘贴
+                System.Windows.Clipboard.SetText(fullPath);
+
+                // 3. 根据后缀名动态选择 CAD 命令窗口
+                if (ext == ".dwg" || ext == ".dxf")
+                {
+                    // 如果是图纸，打开外部参照窗口
+                    CadService.OpenXrefDialog();
+                }
+                else if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(ext))
+                {
+                    // 如果是图片，打开图像附着窗口（IMAGEATTACH）
+                    // 这样点击“打开”后，会直接跳到图像的缩放和旋转设置界面
+                    CadService.OpenImageAttachDialog();
+                }
+                else
+                {
+                    System.Windows.MessageBox.Show("该文件格式不支持作为参照插入。");
+                }
+            }
+        }
 
         // 统一创建对象的方法，处理备注状态
         private FileSystemItem CreateItem(string path, ExplorerItemType type, bool isRoot = false)
