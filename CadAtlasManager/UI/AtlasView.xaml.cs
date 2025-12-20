@@ -1280,7 +1280,7 @@ namespace CadAtlasManager
         // [AtlasView.xaml.cs]
         private void MenuItem_InsertXref_Click(object sender, RoutedEventArgs e)
         {
-            // 1. 获取选中的文件
+            // 1. 获取当前选中的文件
             var item = GetSelectedItem();
 
             if (item != null && item.Type == ExplorerItemType.File)
@@ -1288,20 +1288,24 @@ namespace CadAtlasManager
                 string fullPath = item.FullPath;
                 string ext = System.IO.Path.GetExtension(fullPath).ToLower();
 
-                // 2. 将文件路径复制到系统剪贴板，方便用户粘贴
+                // 2. 将文件路径复制到系统剪贴板，方便用户在弹出窗口中 Ctrl+V
                 System.Windows.Clipboard.SetText(fullPath);
 
-                // 3. 根据后缀名动态选择 CAD 命令窗口
+                // 3. 根据后缀名动态选择对应的 CAD 附着命令
                 if (ext == ".dwg" || ext == ".dxf")
                 {
-                    // 如果是图纸，打开外部参照窗口
+                    // DWG 图纸使用外部参照 (XATTACH)
                     CadService.OpenXrefDialog();
                 }
                 else if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(ext))
                 {
-                    // 如果是图片，打开图像附着窗口（IMAGEATTACH）
-                    // 这样点击“打开”后，会直接跳到图像的缩放和旋转设置界面
+                    // 图片使用图像附着 (IMAGEATTACH)
                     CadService.OpenImageAttachDialog();
+                }
+                else if (ext == ".pdf")
+                {
+                    // PDF 文件使用 PDF 参考底图附着 (PDFATTACH)
+                    CadService.OpenPdfAttachDialog();
                 }
                 else
                 {

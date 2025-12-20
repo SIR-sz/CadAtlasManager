@@ -486,7 +486,18 @@ namespace CadAtlasManager
             // 使用 IMAGEATTACH 命令，这是专门用于图片的附着窗口
             doc.SendStringToExecute("_.IMAGEATTACH ", true, false, false);
         }
-
+        // [CadService.cs]
+        /// <summary>
+        /// 启动 CAD 的 PDF 参考底图附着对话框
+        /// </summary>
+        public static void OpenPdfAttachDialog()
+        {
+            var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+            doc.Window.Focus();
+            // 使用 PDFATTACH 命令，专门用于附着 PDF 参考底图
+            doc.SendStringToExecute("_.PDFATTACH ", true, false, false);
+        }
 
         public static int ManualPickAndPlot(Document doc, string outputDir, BatchPlotConfig config)
         {
