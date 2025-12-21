@@ -144,7 +144,14 @@ namespace CadAtlasManager
                 // 加载子文件夹
                 foreach (var dir in Directory.GetDirectories(folder.FullPath))
                 {
-                    if (new DirectoryInfo(dir).Attributes.HasFlag(FileAttributes.Hidden)) continue;
+                    DirectoryInfo dirInfo = new DirectoryInfo(dir);
+
+                    // 1. 原有的逻辑：跳过隐藏文件夹
+                    if (dirInfo.Attributes.HasFlag(FileAttributes.Hidden)) continue;
+
+                    // 2. 【新增逻辑】：如果文件夹名称是 "_Plot"，则跳过不显示
+                    if (dirInfo.Name.Equals("_Plot", StringComparison.OrdinalIgnoreCase)) continue;
+
                     var item = CreateItem(dir, ExplorerItemType.Folder);
                     ProjectFileListItems.Add(item);
                 }
@@ -1062,12 +1069,16 @@ namespace CadAtlasManager
                 RemarkManager.LoadRemarks(parent.FullPath);
                 foreach (var dir in Directory.GetDirectories(parent.FullPath))
                 {
-                    if (new DirectoryInfo(dir).Attributes.HasFlag(FileAttributes.Hidden)) continue;
+                    DirectoryInfo dirInfo = new DirectoryInfo(dir);
+                    if (dirInfo.Attributes.HasFlag(FileAttributes.Hidden)) continue;
+
+                    // 【新增】：同步在左侧树中隐藏 _Plot 文件夹
+                    if (dirInfo.Name.Equals("_Plot", StringComparison.OrdinalIgnoreCase)) continue;
+
                     var sub = CreateItem(dir, ExplorerItemType.Folder);
-                    LoadProjectSubItems(sub); // 递归加载目录
+                    LoadProjectSubItems(sub);
                     parent.Children.Add(sub);
                 }
-                // 注意：这里不再向 parent.Children 添加 File 类型，文件统一交给 DataGrid
             }
             catch { }
         }
@@ -1773,17 +1784,57 @@ namespace CadAtlasManager
             }
         }
 
+        // 文件位置：sir-sz/cadatlasmanager/CadAtlasManager-FZ1/CadAtlasManager/UI/AtlasView.xaml.cs
+
         private void LoadConfig()
         {
             try
             {
-                var config = ConfigManager.Load(); if (config == null) return;
-                if (config.AtlasFolders != null) foreach (var f in config.AtlasFolders) if (Directory.Exists(f) && !_loadedAtlasFolders.Contains(f)) { _loadedAtlasFolders.Add(f); AddFolderToTree(f); }
-                if (config.Projects != null) foreach (var p in config.Projects) if (Directory.Exists(p.Path)) ProjectList.Add(p);
-                if (!string.IsNullOrEmpty(config.LastActiveProjectPath)) { var t = ProjectList.FirstOrDefault(p => p.Path == config.LastActiveProjectPath); if (t != null) CbProjects.SelectedItem = t; }
+                var config = ConfigManager.Load();
+                if (config == null) return;
+
+                // --- 原有逻辑：加载图集文件夹和项目列表 ---
+                if (config.AtlasFolders != null)
+                    foreach (var f in config.AtlasFolders)
+                        if (Directory.Exists(f) && !_loadedAtlasFolders.Contains(f))
+                        { _loadedAtlasFolders.Add(f); AddFolderToTree(f); }
+
+                if (config.Projects != null)
+                    foreach (var p in config.Projects)
+                        if (Directory.Exists(p.Path)) ProjectList.Add(p);
+
+                if (!string.IsNullOrEmpty(config.LastActiveProjectPath))
+                {
+                    var t = ProjectList.FirstOrDefault(p => p.Path == config.LastActiveProjectPath);
+                    if (t != null) CbProjects.SelectedItem = t;
+                }
+
+                // --- 【新增代码】恢复布局宽度 ---
+                ApplySavedLayout(config);
             }
             catch { }
         }
+
+        // --- 【新增方法】将保存的数值应用到界面 ---
+        private void ApplySavedLayout(AppConfig config)
+        {
+            // 1. 恢复项目工作台布局
+            // 恢复左侧树宽度 (GridColumn 需要使用 GridLength)
+            if (config.ProjectTreeWidth > 50)
+                ColProjectTree.Width = new GridLength(config.ProjectTreeWidth);
+
+            // 恢复右侧列表“文件名称”列宽
+            //if (config.ProjectNameColumnWidth > 50)
+            // ColProjectFileName.Width = config.ProjectNameColumnWidth;
+
+            // 2. 恢复图纸工作台布局
+            if (config.PlotTreeWidth > 50)
+                ColPlotTree.Width = new GridLength(config.PlotTreeWidth);
+
+            //if (config.PlotNameColumnWidth > 50)
+            //ColPlotFileName.Width = config.PlotNameColumnWidth;
+        }
+
         private void SaveConfig() { string ap = _activeProject?.Path ?? ""; ConfigManager.Save(_loadedAtlasFolders, ProjectList, ap); }
 
         private void BtnLoadFolder_Click(object sender, RoutedEventArgs e) { using (var d = new WinForms.FolderBrowserDialog()) { if (d.ShowDialog() == WinForms.DialogResult.OK && !_loadedAtlasFolders.Contains(d.SelectedPath)) { _loadedAtlasFolders.Add(d.SelectedPath); AddFolderToTree(d.SelectedPath); SaveConfig(); } } }
@@ -2550,8 +2601,37 @@ namespace CadAtlasManager
             if (".zip.rar.7z".Contains(x)) return "📦";
             return "📃";
         }
+        private void BtnSaveLayout_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var config = ConfigManager.Load();
+
+                // 记录项目工作台宽度
+                config.ProjectTreeWidth = ColProjectTree.ActualWidth;
+                config.ProjectNameColumnWidth = ColProjectFileName.ActualWidth;
+
+                // 记录图纸工作台宽度
+                config.PlotTreeWidth = ColPlotTree.ActualWidth;
+                config.PlotNameColumnWidth = ColPlotFileName.ActualWidth;
+
+                if (MainPlugin._ps != null)
+                {
+                    // 记录面板当前的宽度和高度
+                    config.PaletteWidth = MainPlugin._ps.Size.Width;
+                    config.PaletteHeight = MainPlugin._ps.Size.Height;
+                }
+
+                ConfigManager.Save(config);
+                MessageBox.Show("布局与窗口尺寸已保存！", "提示");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("保存失败: " + ex.Message);
+            }
+        }
+
     }
-    // 用于界面箭头旋转的转换器
     public class BooleanToAngleConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)

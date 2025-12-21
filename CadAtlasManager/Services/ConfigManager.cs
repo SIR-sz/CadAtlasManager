@@ -12,6 +12,14 @@ namespace CadAtlasManager
         public List<ProjectItem> Projects { get; set; } = new List<ProjectItem>();
         public string LastActiveProjectPath { get; set; } = "";
 
+        public double PaletteWidth { get; set; } = 350;
+        public double PaletteHeight { get; set; } = 700;
+
+        public double ProjectTreeWidth { get; set; } = 200;
+        public double ProjectNameColumnWidth { get; set; } = 300;
+        public double PlotTreeWidth { get; set; } = 200;
+        public double PlotNameColumnWidth { get; set; } = 300;
+
         // --- 打印相关配置 ---
         public string TitleBlockNames { get; set; } = "TK,A3图框";
         public string LastPrinter { get; set; } = "DWG To PDF.pc3";

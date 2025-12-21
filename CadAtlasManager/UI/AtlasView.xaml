@@ -200,6 +200,7 @@
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="5,0">
                         <Button Name="BtnLoadFolder" Content="+ 导入图集" Padding="8,4" Click="BtnLoadFolder_Click" Background="#ddd"/>
                         <Button Content="刷新列表" Margin="5,0,0,0" Padding="8,4" Click="BtnRefresh_Click"/>
+                        <Button Content="💾 保存布局" Margin="5,0,0,0" Padding="8,4" Click="BtnSaveLayout_Click" ToolTip="保存当前各选项卡的栏位宽度设置"/>
                     </StackPanel>
                     <Border Grid.Row="2" BorderBrush="#ddd" BorderThickness="0,1,0,1" Padding="5" Margin="0,5" Background="#fafafa">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
@@ -260,7 +261,7 @@
 
                     <Grid Grid.Row="2" Margin="0,10,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1.2*"/>
+                            <ColumnDefinition x:Name="ColProjectTree" Width="1.2*"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="3*"/>
                         </Grid.ColumnDefinitions>
@@ -326,7 +327,7 @@
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
 
-                                    <DataGridTextColumn Header="文件名称" Binding="{Binding Name}" IsReadOnly="True" Width="*" SortMemberPath="Name">
+                                    <DataGridTextColumn x:Name="ColProjectFileName" Header="文件名称" Binding="{Binding Name}" IsReadOnly="True" Width="*" SortMemberPath="Name">
                                         <DataGridTextColumn.ElementStyle>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="FontWeight" Value="{Binding FontWeight}"/>
@@ -375,7 +376,7 @@
 
                     <Grid Grid.Row="2" Margin="0,10,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1.2*"/>
+                            <ColumnDefinition x:Name="ColPlotTree" Width="1.2*"/>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="3*"/>
                         </Grid.ColumnDefinitions>
@@ -425,7 +426,8 @@
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
                                     <DataGridTextColumn Header="类型" Binding="{Binding TypeIcon}" IsReadOnly="True" Width="45"/>
-                                    <DataGridTextColumn Header="文件名称" Binding="{Binding Name}" IsReadOnly="True" Width="*" SortMemberPath="Name">
+
+                                    <DataGridTextColumn x:Name="ColPlotFileName" Header="文件名称" Binding="{Binding Name}" IsReadOnly="True" Width="*" SortMemberPath="Name">
                                         <DataGridTextColumn.ElementStyle>
                                             <Style TargetType="TextBlock">
                                                 <Setter Property="FontWeight" Value="{Binding FontWeight}"/>
