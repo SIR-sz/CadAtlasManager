@@ -1236,18 +1236,36 @@ namespace CadAtlasManager
             return list;
         }
         // 3. 更新 UI 显示逻辑
-        private void UpdateVersionUi(FileSystemItem item, PdfStatus status)
+        // 2. 修改 UpdateVersionUi 支持文字替换
+        // [AtlasView.xaml.cs]
+        private void UpdateVersionUi(FileSystemItem item, PdfStatus status, bool isExternal = false)
         {
+            // 如果是外部绑定，设置前缀文字
+            string prefix = isExternal ? "外部绑定" : "";
+
             switch (status)
             {
                 case PdfStatus.Latest:
-                    item.VersionStatus = "✅ 最新"; item.StatusColor = Brushes.Green; break;
+                    // 结果示例：✅ 最新 或 ✅ 外部绑定最新
+                    item.VersionStatus = $"✅ {prefix}最新";
+                    item.StatusColor = Brushes.Green;
+                    break;
                 case PdfStatus.Expired:
-                    item.VersionStatus = "⚠️ 需更新"; item.StatusColor = Brushes.Red; break;
+                    // 结果示例：⚠️ 需更新 或 ⚠️ 外部绑定需更新
+                    item.VersionStatus = $"⚠️ {prefix}需更新";
+                    item.StatusColor = Brushes.Red;
+                    break;
                 case PdfStatus.NeedRemerge:
-                    item.VersionStatus = "🔄 需重并"; item.StatusColor = Brushes.Orange; break;
+                    item.VersionStatus = "🔄 需重并";
+                    item.StatusColor = Brushes.Orange;
+                    break;
                 case PdfStatus.MissingSource:
-                    item.VersionStatus = "❓ 源缺失"; item.StatusColor = Brushes.Gray; break;
+                    item.VersionStatus = "❓ 源缺失";
+                    item.StatusColor = Brushes.Gray;
+                    break;
+                default:
+                    item.VersionStatus = "";
+                    break;
             }
         }
         // [添加到 AtlasView.xaml.cs]
@@ -1807,7 +1825,7 @@ namespace CadAtlasManager
                 Mouse.OverrideCursor = Cursors.Wait;
 
                 // 调用 SavePlotRecord，它会自动通过 CadService 静默提取 DWG 指纹并保存元数据
-                PlotMetaManager.SavePlotRecord(dwgPath, finalPdfPath);
+                PlotMetaManager.SavePlotRecord(dwgPath, finalPdfPath, true);
 
                 // --- 收尾工作 ---
                 _pendingBindingPdf = null;
@@ -2041,23 +2059,17 @@ namespace CadAtlasManager
         // [修改方法：ValidatePdfVersion]
         private void ValidatePdfVersion(FileSystemItem item)
         {
-            // 关键点：从文件 FullPath 反推它所属的 _Plot 根目录
-            // 假设路径为 .../方案阶段/_Plot/Combined/xxx.pdf，我们需要获取 .../方案阶段/_Plot
-            string currentFileDir = Path.GetDirectoryName(item.FullPath);
-            string plotDir = "";
-
-            if (currentFileDir.EndsWith("_Plot", StringComparison.OrdinalIgnoreCase))
-                plotDir = currentFileDir;
-            else if (currentFileDir.Contains("_Plot"))
-                plotDir = item.FullPath.Substring(0, item.FullPath.IndexOf("_Plot") + 5);
-
+            string plotDir = GetCurrentPlotDir();
             if (string.IsNullOrEmpty(plotDir)) return;
 
-            // 调用核心递归逻辑时，传入当前确定的 plotDir
+            // 获取基础状态
             PdfStatus status = GetPdfStatusRecursive(item.Name, plotDir);
 
-            // 更新 UI (保持原逻辑不变)
-            UpdateVersionUi(item, status);
+            // 判定是否为外部绑定
+            bool isExternal = PlotMetaManager.IsExternalBind(plotDir, item.Name);
+
+            // 更新 UI
+            UpdateVersionUi(item, status, isExternal);
         }
 
         // [修改方法：GetPdfStatusRecursive]
@@ -2195,24 +2207,31 @@ namespace CadAtlasManager
             return isLatest ? PdfStatus.Latest : PdfStatus.Expired;
         }
         // [添加到 AtlasView.xaml.cs]
+        // [AtlasView.xaml.cs]
         private string GetCurrentPlotDir()
         {
-            // 优先从右侧列表的第一个选中项推断路径
-            var item = PlotFileListItems.FirstOrDefault();
-            if (item == null)
+            // 1. 核心修复：优先使用成员变量记录的路径，这在 LoadPlotFilesList 一开始就赋值了
+            // 这样能确保即使列表还是空的，也能正确识别 _Plot 目录
+            string path = _currentPlotFolderPath;
+
+            if (string.IsNullOrEmpty(path))
             {
-                // 如果列表为空，尝试从左侧树选中的节点推断
-                item = PlotFolderTree.SelectedItem as FileSystemItem;
+                // 兜底逻辑：如果记录为空，再尝试从列表或树节点获取
+                var item = PlotFileListItems.FirstOrDefault();
+                if (item == null)
+                {
+                    item = PlotFolderTree.SelectedItem as FileSystemItem;
+                }
+                if (item != null) path = item.FullPath;
             }
 
-            if (item == null) return null;
+            if (string.IsNullOrEmpty(path)) return null;
 
             // 向上寻找路径中包含 _Plot 的部分
-            string path = item.FullPath;
             int idx = path.IndexOf("_Plot", StringComparison.OrdinalIgnoreCase);
             if (idx != -1)
             {
-                return path.Substring(0, idx + 5); // 截取到 .../_Plot
+                return path.Substring(0, idx + 5);
             }
             return null;
         }

@@ -18,7 +18,8 @@ namespace CadAtlasManager
         private static Dictionary<string, Dictionary<string, string>> _folderCaches =
             new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         // 在 PlotMetaManager 类内部添加此方法
-        public static void SavePlotRecord(string dwgPath, string fullPdfPath)
+        // 2. 相应修改 SavePlotRecord 以便支持外部绑定调用
+        public static void SavePlotRecord(string dwgPath, string fullPdfPath, bool isExternal = false)
         {
             if (string.IsNullOrEmpty(dwgPath) || string.IsNullOrEmpty(fullPdfPath)) return;
 
@@ -26,12 +27,20 @@ namespace CadAtlasManager
             string pdfName = Path.GetFileName(fullPdfPath);
             string dwgName = Path.GetFileName(dwgPath);
 
-            // 获取指纹和时间戳
             string fingerprint = CadService.GetContentFingerprint(dwgPath);
             string timestamp = CadService.GetFileTimestamp(dwgPath);
 
-            // 保存记录
-            SaveRecord(plotFolder, pdfName, dwgName, fingerprint, timestamp);
+            SaveRecord(plotFolder, pdfName, dwgName, fingerprint, timestamp, isExternal);
+        }
+        // 3. 新增：判断是否为外部绑定
+        public static bool IsExternalBind(string plotFolder, string pdfName)
+        {
+            var cache = GetCache(plotFolder);
+            if (cache.TryGetValue(pdfName, out string val))
+            {
+                return val.EndsWith("|EXTERNAL", StringComparison.OrdinalIgnoreCase);
+            }
+            return false;
         }
         /// <summary>
         /// 加载指定目录的历史记录
@@ -66,10 +75,15 @@ namespace CadAtlasManager
         }
 
         // 1. 保存普通打印记录 (DWG -> PDF)
-        public static void SaveRecord(string plotFolder, string pdfName, string dwgName, string fingerprint, string timestamp)
+        // 1. 修改 SaveRecord 方法，增加 isExternal 参数
+        public static void SaveRecord(string plotFolder, string pdfName, string dwgName, string fingerprint, string timestamp, bool isExternal = false)
         {
             var cache = GetCache(plotFolder);
-            cache[pdfName] = $"{dwgName}|{fingerprint}|{timestamp}";
+            // 格式改为：dwgName|fingerprint|timestamp|EXTERNAL (如果有)
+            string data = $"{dwgName}|{fingerprint}|{timestamp}";
+            if (isExternal) data += "|EXTERNAL";
+
+            cache[pdfName] = data;
             WriteToDisk(plotFolder, cache);
         }
 
