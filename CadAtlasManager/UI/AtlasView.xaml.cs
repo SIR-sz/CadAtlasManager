@@ -61,7 +61,7 @@ namespace CadAtlasManager
         {
             ".dwg", ".dxf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".wps", ".pdf", ".txt",
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".mp4", ".avi", ".mov", //
-            ".zip", ".rar", ".7z"
+            ".zip", ".rar", ".7z", ".pat"
         };
 
         public AtlasView()
@@ -2317,6 +2317,7 @@ namespace CadAtlasManager
         private string GetIconForExtension(string x)
         {
             if (x.Contains("dwg")) return "📐";
+            if (x == ".pat") return "🦓"; // 斑马纹图标，很形象地代表填充图案
             if (".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return "📄";
             if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return "🖼️";
             if (x.Contains("pdf")) return "📕";
