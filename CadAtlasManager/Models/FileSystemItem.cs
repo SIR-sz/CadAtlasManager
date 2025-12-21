@@ -55,7 +55,7 @@ namespace CadAtlasManager.Models
             set { if (_isChecked != value) { _isChecked = value; OnPropertyChanged("IsChecked"); } }
         }
 
-        public string CreationDate { get; set; }
+        public string FileDate { get; set; } // 统一称为文件日期
 
         private string _versionStatus;
         public string VersionStatus

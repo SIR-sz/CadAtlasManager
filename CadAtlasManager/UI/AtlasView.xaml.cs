@@ -156,7 +156,8 @@ namespace CadAtlasManager
                     if (_allowedExtensions.Contains(ext) && CheckFileFilter(ext, filter))
                     {
                         var item = CreateItem(file, ExplorerItemType.File);
-                        item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm");
+                        // 【修改位置】：由 GetCreationTime 改为 GetLastWriteTime
+                        item.FileDate = File.GetLastWriteTime(file).ToString("yyyy-MM-dd HH:mm");
                         ProjectFileListItems.Add(item);
                     }
                 }
@@ -569,10 +570,11 @@ namespace CadAtlasManager
                     string ext = Path.GetExtension(file).ToLower();
                     if (".pdf.jpg.jpeg.png.plt.tif.tiff.txt".Contains(ext)) //
                     {
-                        var item = CreateItem(file, ExplorerItemType.File); //
-                        item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm"); //
-                        if (ext == ".pdf") ValidatePdfVersion(item); //
-                        PlotFileListItems.Add(item); //
+                        var item = CreateItem(file, ExplorerItemType.File);
+                        // 【修改位置】：由 GetCreationTime 改为 GetLastWriteTime
+                        item.FileDate = File.GetLastWriteTime(file).ToString("yyyy-MM-dd HH:mm");
+                        if (ext == ".pdf") ValidatePdfVersion(item);
+                        PlotFileListItems.Add(item);
                     }
                 }
             }
@@ -1225,7 +1227,8 @@ namespace CadAtlasManager
                     realDwgName = baseName + ".dwg";
                 }
 
-                string dwgPath = FindDwgInProject(_activeProject.Path, realDwgName);
+                string sourceFolder = Path.GetDirectoryName(plotDir);
+                string dwgPath = Path.Combine(sourceFolder, realDwgName);
 
                 if (!string.IsNullOrEmpty(dwgPath) && File.Exists(dwgPath))
                 {
@@ -2217,17 +2220,26 @@ namespace CadAtlasManager
         }
 
         // [修改方法：CheckSingleDwgStatus]
+        // [修改文件: UI/AtlasView.xaml.cs]
         private PdfStatus CheckSingleDwgStatus(string pdfName, string plotDir)
         {
-            // 1. 在当前 plotDir 的历史记录中找 DWG 名字
+            // 1. 获取 DWG 文件名 (从记录或猜测)
             PlotMetaManager.LoadHistory(plotDir);
             string realDwgName = PlotMetaManager.GetSourceDwgName(plotDir, pdfName);
 
-            // ... 猜测名字逻辑 (同原代码) ...
+            if (string.IsNullOrEmpty(realDwgName))
+            {
+                string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(pdfName), @"_\d+$", "");
+                realDwgName = baseName + ".dwg";
+            }
 
-            // 2. 找 DWG 文件 (这一步仍建议在整个项目范围内递归搜，因为用户可能移动了 DWG 但没重印)
-            string sourceDwgPath = FindDwgInProject(_activeProject.Path, realDwgName);
-            if (string.IsNullOrEmpty(sourceDwgPath)) return PdfStatus.MissingSource;
+            // 2. 【核心修改】定位 DWG 路径：仅搜索 plotDir (_Plot) 的上一级目录
+            // 假设结构为：Folder/Sub/Drawing.dwg 和 Folder/Sub/_Plot/Drawing.pdf
+            string sourceFolder = Path.GetDirectoryName(plotDir); // 获取 _Plot 的父目录
+            string sourceDwgPath = Path.Combine(sourceFolder, realDwgName);
+
+            // 检查文件是否存在于该特定目录下，不再进行全项目递归
+            if (!File.Exists(sourceDwgPath)) return PdfStatus.MissingSource;
 
             // 3. 校验指纹
             string currentTimestamp = CadService.GetFileTimestamp(sourceDwgPath);
@@ -2344,66 +2356,33 @@ namespace CadAtlasManager
         // =================================================================
         // 【核心修复】右键菜单 - 打开源 DWG (同步最新的查找逻辑)
         // =================================================================
+        // [修改文件: UI/AtlasView.xaml.cs]
         private void MenuItem_OpenSourceDwg_Click(object sender, RoutedEventArgs e)
         {
-            // --- 修改开始 ---
-            // 从右侧列表获取选中项
             var item = PlotFileList.SelectedItem as FileSystemItem;
-            if (item == null || item.Type != ExplorerItemType.File || !item.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
-            {
-                MessageBox.Show("请先选择一个 PDF 文件。");
-                return;
-            }
+            if (item == null || !item.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)) return;
 
-            if (_activeProject == null) return;
+            string plotDir = GetCurrentPlotDir();
+            if (string.IsNullOrEmpty(plotDir)) return;
 
-            string pdfName = item.Name;
-            string outputDir = _activeProject.OutputPath; // PDF 所在的 _Plot 目录
-
-            // ---------------------------------------------------------
-            // 查找逻辑 (与校验版本逻辑保持一致)
-            // ---------------------------------------------------------
-
-            // A. 优先从历史记录反查真实 DWG 文件名
-            string realDwgName = PlotMetaManager.GetSourceDwgName(outputDir, pdfName);
-
-            // B. 如果记录不存在，尝试智能猜测 (去除 _1, _2 等后缀)
+            // 确定 DWG 文件名
+            string realDwgName = PlotMetaManager.GetSourceDwgName(plotDir, item.Name);
             if (string.IsNullOrEmpty(realDwgName))
             {
-                // 正则去除结尾的 _数字： Drawing1_1.pdf -> Drawing1.dwg
-                string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(pdfName), @"_\d+$", "");
+                string baseName = System.Text.RegularExpressions.Regex.Replace(Path.GetFileNameWithoutExtension(item.Name), @"_\d+$", "");
                 realDwgName = baseName + ".dwg";
             }
 
-            // C. 构建路径 & 递归搜索 (解决子文件夹问题)
-            string sourceDwgPath = Path.Combine(_activeProject.Path, realDwgName);
+            // 【核心修改】直接在 _Plot 的上一级目录查找
+            string sourceDwgPath = Path.Combine(Path.GetDirectoryName(plotDir), realDwgName);
 
-            if (!File.Exists(sourceDwgPath))
-            {
-                try
-                {
-                    // 在项目根目录下递归搜索同名文件
-                    string onlyFileName = Path.GetFileName(realDwgName);
-                    var foundFiles = Directory.GetFiles(_activeProject.Path, onlyFileName, SearchOption.AllDirectories);
-                    if (foundFiles.Length > 0)
-                    {
-                        sourceDwgPath = foundFiles[0]; // 找到了！
-                    }
-                }
-                catch { }
-            }
-
-            // ---------------------------------------------------------
-            // 执行打开
-            // ---------------------------------------------------------
             if (File.Exists(sourceDwgPath))
             {
-                // "Edit" 表示以可读写方式打开，方便你修改源文件
                 CadService.OpenDwg(sourceDwgPath, "Edit");
             }
             else
             {
-                MessageBox.Show($"未找到源文件：\n{realDwgName}\n\n可能原因：\n1. 源文件已被移动或重命名\n2. 尚未对此文件进行过批量打印(无关联记录)", "无法打开");
+                MessageBox.Show($"在该 PDF 的相对路径（上一级目录）未找到源文件：\n{realDwgName}", "文件未找到");
             }
         }
         private void BtnVersion_Click(object sender, RoutedEventArgs e) => MessageBox.Show(_versionInfo);

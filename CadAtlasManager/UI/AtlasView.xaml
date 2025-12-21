@@ -335,7 +335,7 @@
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
 
-                                    <DataGridTextColumn Header="创建日期" Binding="{Binding CreationDate}" IsReadOnly="True" Width="140"/>
+                                    <DataGridTextColumn Header="修改日期" Binding="{Binding FileDate}" IsReadOnly="True" Width="140"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                         </DockPanel>
@@ -441,7 +441,7 @@
                                             </Style>
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
-                                    <DataGridTextColumn Header="创建日期" Binding="{Binding CreationDate}" IsReadOnly="True" Width="140"/>
+                                    <DataGridTextColumn Header="修改日期" Binding="{Binding FileDate}" IsReadOnly="True" Width="140"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                         </DockPanel>
