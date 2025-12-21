@@ -17,6 +17,11 @@
         <Style x:Key="StatusTextStyle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="Gray"/>
             <Style.Triggers>
+                <DataTrigger Binding="{Binding Status}" Value="正在打印...">
+                    <Setter Property="Foreground" Value="#FF8C00"/>
+                    <Setter Property="FontWeight" Value="SemiBold"/>
+                </DataTrigger>
+
                 <DataTrigger Binding="{Binding IsSuccess}" Value="True">
                     <Setter Property="Foreground" Value="Green"/>
                     <Setter Property="FontWeight" Value="SemiBold"/>
@@ -137,7 +142,7 @@
                     <GridView>
                         <GridViewColumn Width="45" HeaderContainerStyle="{StaticResource LeftAlignedHeaderStyle}">
                             <GridViewColumn.Header>
-                                <CheckBox ToolTip="全选" Click="HeaderCheckBox_Click" Margin="5,0,0,0"/>
+                                <CheckBox ToolTip="全选" Click="HeaderCheckBox_Click" Margin="1,0,0,0"/>
                             </GridViewColumn.Header>
                             <GridViewColumn.CellTemplate>
                                 <DataTemplate>

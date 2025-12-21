@@ -44,6 +44,33 @@ namespace CadAtlasManager
                 }
             }
         }
+        // [CadService.cs] 增加此方法
+        public static void ForceCleanup()
+        {
+            try
+            {
+                // 1. 检查打印引擎状态 (虽然 ProcessPlotState 是只读的，但我们可以记录日志或做预防性判断)
+                if (PlotFactory.ProcessPlotState != ProcessPlotState.NotPlotting)
+                {
+                    // 可以在此处添加日志：警告引擎未完全停止
+                }
+
+                // 2. 强制垃圾回收：
+                // AutoCAD .NET 包装器在底层是 COM 对象，必须通过两次 GC 确保释放
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                GC.WaitForFullGCComplete();
+
+                // 3. 提示：如果依然闪退，说明有静态变量持有了 PlotSettings 或 PlotInfo，
+                // 确保没有全局变量在窗口关闭后还引用这些打印对象。
+            }
+            catch (System.Exception ex)
+            {
+                // 静默处理清理过程中的异常
+                System.Diagnostics.Debug.WriteLine("清理环境时出错: " + ex.Message);
+            }
+        }
 
         // 核心：获取 CAD 内部的最后保存时间 (Tduupdate) 作为指纹
         public static string GetContentFingerprint(string dwgPath)
@@ -650,7 +677,7 @@ namespace CadAtlasManager
                     // --- 模式 A：循环手动框选 ---
                     while (true)
                     {
-                        var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [回车结束]: ");
+                        var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [Esc结束]: ");
                         if (ppr1.Status != PromptStatus.OK) break;
                         var ppr2 = ed.GetCorner("\n指定第二个角点: ", ppr1.Value);
                         if (ppr2.Status != PromptStatus.OK) break;
@@ -679,7 +706,7 @@ namespace CadAtlasManager
                 {
                     // --- 模式 B：框选块参照 ---
                     PromptSelectionOptions pso = new PromptSelectionOptions();
-                    pso.MessageForAdding = "\n请选择图框对应的块参照或外部参照 (可多选): ";
+                    pso.MessageForAdding = "\n请选择图框对应的块参照或外部参照 (可多选，回车确认选择): ";
                     SelectionFilter filter = new SelectionFilter(new TypedValue[] { new TypedValue((int)DxfCode.Start, "INSERT") });
 
                     var psr = ed.GetSelection(pso, filter);
@@ -722,6 +749,25 @@ namespace CadAtlasManager
             string pdfName = $"{dwgFileName}_{index:D2}.pdf";
             string fullPdfPath = Path.Combine(outputDir, pdfName);
             return PrintExtent(doc, layout, tb, config, fullPdfPath);
+        }
+        // [CadService.cs] 
+        // 建议添加在文件末尾或合适的位置
+        public static void EnsureHasActiveDocument()
+        {
+            var docMgr = Application.DocumentManager;
+            if (docMgr.Count == 0)
+            {
+                try
+                {
+                    // 如果一个文档都没有，则创建一个空白文档（使用默认模板）
+                    // 这能防止 PlotSettingsValidator 等 API 因为缺少 Database 而崩溃
+                    docMgr.Add("");
+                }
+                catch (System.Exception ex)
+                {
+                    // 静默处理或记录日志
+                }
+            }
         }
     }
 }
