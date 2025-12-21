@@ -971,20 +971,35 @@ namespace CadAtlasManager
         {
             // 获取选中的 DWG 文件列表
             var selectedDwgs = GetAllSelectedItems()
-                .Where(i => i.Type == ExplorerItemType.File && i.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
-                .ToList();
+        .Where(i => i.Type == ExplorerItemType.File && i.FullPath.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
+        .ToList();
 
             if (selectedDwgs.Count == 0) return;
 
-            // 转换模型并弹出对话框
             var candidates = selectedDwgs.Select(d => new PlotCandidate
             {
-                FilePath = d.FullPath, // 这里赋值给模型的 FilePath
+                FilePath = d.FullPath,
                 FileName = System.IO.Path.GetFileName(d.FullPath)
             }).ToList();
 
+            // 弹出对话框
             var dialog = new BatchPlotDialog(candidates);
+
+            // 【优化点 2】：利用对话框阻塞特性，关闭后立即执行刷新
             dialog.ShowDialog();
+
+            // 刷新图纸树（重新扫描磁盘 _Plot 目录）
+            RefreshPlotTree();
+
+            // 如果当前选中的就是图纸工作台，强制触发一次右侧列表重载
+            if (!string.IsNullOrEmpty(_currentPlotFolderPath))
+            {
+                var currentItem = FindItemInTree(PlotFolderItems, _currentPlotFolderPath);
+                if (currentItem != null)
+                {
+                    LoadPlotFilesList(currentItem);
+                }
+            }
         }
 
         private void ExecuteHybridPlotWorkflow(List<FileSystemItem> dwgs, BatchPlotConfig config)

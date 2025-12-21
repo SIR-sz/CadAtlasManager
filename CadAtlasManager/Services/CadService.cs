@@ -17,6 +17,33 @@ namespace CadAtlasManager
     {
         public void Initialize() { }
         public void Terminate() { }
+        // [CadService.cs] 内部添加此方法
+        private static void EnsureMetricUnits(Document doc)
+        {
+            Database db = doc.Database;
+            // Measurement: 0 = English (英制), 1 = Metric (公制)
+            if (db.Measurement == MeasurementValue.English)
+            {
+                try
+                {
+                    // 1. 修改系统变量
+                    db.Measurement = MeasurementValue.Metric;
+
+                    // 2. 修改插入单位（可选，但建议一并修改为毫米）
+                    db.Insunits = UnitsValue.Millimeters;
+
+                    // 3. 强制保存文件
+                    // 注意：打印引擎通常会读取数据库的物理状态，保存可以确保单位变更在打印任务中生效
+                    db.SaveAs(doc.Name, db.OriginalFileVersion);
+
+                    doc.Editor.WriteMessage($"\n[系统] 检测到英制图纸，已自动转换为公制并保存：{Path.GetFileName(doc.Name)}");
+                }
+                catch (System.Exception ex)
+                {
+                    doc.Editor.WriteMessage($"\n[错误] 转换公制单位失败: {ex.Message}");
+                }
+            }
+        }
 
         // 核心：获取 CAD 内部的最后保存时间 (Tduupdate) 作为指纹
         public static string GetContentFingerprint(string dwgPath)
@@ -161,6 +188,10 @@ namespace CadAtlasManager
 
                 using (doc.LockDocument())
                 {
+                    // --- 新增：打印前确保单位为公制 ---
+                    EnsureMetricUnits(doc);
+                    // --------------------------------
+
                     Database db = doc.Database;
                     var blockNames = config.TitleBlockNames?.Split(new[] { ',', '，' }, StringSplitOptions.RemoveEmptyEntries)
                                                            .Select(s => s.Trim()).ToList() ?? new List<string>();
@@ -228,65 +259,89 @@ namespace CadAtlasManager
             }
         }
         // [CadService.cs] 修改后的 BuildPlotInfo
+        // --- 优化后的 BuildPlotInfo：修复内存崩溃 ---
+        // [CadService.cs]
         private static PlotInfo BuildPlotInfo(Transaction tr, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, Database targetDb)
         {
             PlotInfo info = new PlotInfo();
             info.Layout = layout.ObjectId;
 
-            // 必须使用 using 确保 settings 被释放
-            using (PlotSettings settings = new PlotSettings(layout.ModelType))
+            // 【关键修复】：绝对不能在这里使用 using。
+            // PlotInfo.OverrideSettings 只是引用了 settings 对象，必须保证在打印完成前它不被释放。
+            PlotSettings settings = new PlotSettings(layout.ModelType);
+            settings.CopyFrom(layout);
+
+            var psv = PlotSettingsValidator.Current;
+            psv.SetPlotConfigurationName(settings, config.PrinterName, null);
+
+            double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
+            double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
+
+            string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
+            if (!string.IsNullOrEmpty(matchedMedia))
+                psv.SetCanonicalMediaName(settings, matchedMedia);
+            else if (!string.IsNullOrEmpty(config.MediaName))
+                psv.SetCanonicalMediaName(settings, config.MediaName);
+
+            if (!string.IsNullOrEmpty(config.StyleSheet))
+                try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
+
+            psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
+            psv.SetPlotWindowArea(settings, new Extents2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y));
+
+            psv.SetPlotRotation(settings, PlotRotation.Degrees000);
+            if (config.AutoRotate)
             {
-                settings.CopyFrom(layout);
-                var psv = PlotSettingsValidator.Current;
+                double paperW = settings.PlotPaperSize.X;
+                double paperH = settings.PlotPaperSize.Y;
+                if ((blockH > blockW) != (paperH > paperW))
+                    psv.SetPlotRotation(settings, PlotRotation.Degrees090);
+            }
 
-                psv.SetPlotConfigurationName(settings, config.PrinterName, null);
-
-                double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
-                double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
-
-                string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
-                if (!string.IsNullOrEmpty(matchedMedia))
-                    psv.SetCanonicalMediaName(settings, matchedMedia);
-                else if (!string.IsNullOrEmpty(config.MediaName))
-                    psv.SetCanonicalMediaName(settings, config.MediaName);
-
-                if (!string.IsNullOrEmpty(config.StyleSheet))
-                    try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
-
-                psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
-                psv.SetPlotWindowArea(settings, new Extents2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y));
-
-                psv.SetPlotRotation(settings, PlotRotation.Degrees000);
-                if (config.AutoRotate)
-                {
-                    double paperW = settings.PlotPaperSize.X;
-                    double paperH = settings.PlotPaperSize.Y;
-                    if ((blockH > blockW) != (paperH > paperW))
-                        psv.SetPlotRotation(settings, PlotRotation.Degrees090);
-                }
-
-                if (config.ScaleType == "Fit")
-                {
-                    psv.SetStdScaleType(settings, StdScaleType.ScaleToFit);
-                    psv.SetPlotCentered(settings, true);
-                }
+            if (config.ScaleType == "Fit")
+            {
+                psv.SetStdScaleType(settings, StdScaleType.ScaleToFit);
+                psv.SetPlotCentered(settings, true);
+            }
+            else
+            {
+                CustomScale scale = ParseCustomScale(config.ScaleType);
+                psv.SetCustomPrintScale(settings, scale);
+                if (config.PlotCentered) psv.SetPlotCentered(settings, true);
                 else
                 {
-                    CustomScale scale = ParseCustomScale(config.ScaleType);
-                    psv.SetCustomPrintScale(settings, scale);
-                    if (config.PlotCentered) psv.SetPlotCentered(settings, true);
-                    else
-                    {
-                        psv.SetPlotCentered(settings, false);
-                        psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY));
-                    }
+                    psv.SetPlotCentered(settings, false);
+                    psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY));
                 }
-                psv.RefreshLists(settings);
+            }
+            psv.RefreshLists(settings);
 
-                // 这一步会将 settings 的内容克隆到 info 中
-                info.OverrideSettings = settings;
-            } // settings 在这里被 Dispose
+            info.OverrideSettings = settings;
             return info;
+        }
+
+        // --- 增强的文件检测逻辑 ---
+        private static bool WaitForFileAndVerify(string filePath, int timeoutMs)
+        {
+            int elapsed = 0;
+            while (elapsed < timeoutMs)
+            {
+                if (File.Exists(filePath))
+                {
+                    try
+                    {
+                        // 尝试以独占模式打开文件，如果成功说明打印机已放开文件句柄
+                        using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+                        {
+                            if (fs.Length > 0) return true;
+                        }
+                    }
+                    catch { /* 文件仍在写入中 */ }
+                }
+                System.Threading.Thread.Sleep(300);
+                elapsed += 300;
+            }
+            return false;
         }
         private static CustomScale ParseCustomScale(string input)
         {
@@ -347,16 +402,43 @@ namespace CadAtlasManager
             }
             return null;
         }
-        // [CadService.cs] 提取出来的单页打印核心逻辑
+
+        // --- 1. 新增：等待物理文件生成的辅助方法 ---
+        private static bool WaitForFileCreated(string filePath, int timeoutMs)
+        {
+            int interval = 250; // 每 250 毫秒检查一次
+            int elapsed = 0;
+            while (elapsed < timeoutMs)
+            {
+                if (File.Exists(filePath))
+                {
+                    try
+                    {
+                        // 关键点：某些 PDF 驱动会先创建一个 0 字节文件占位。
+                        // 我们需要确认文件有内容且不再被独占锁定（写入完成）。
+                        var info = new FileInfo(filePath);
+                        if (info.Length > 0) return true;
+                    }
+                    catch { /* 文件可能仍在被驱动程序写入并独占锁定，继续等待 */ }
+                }
+                System.Threading.Thread.Sleep(interval);
+                elapsed += interval;
+            }
+            return false;
+        }
+        // --- 2. 修改：PrintExtent 核心打印方法 ---
+        // --- 修改后的 PrintExtent ---
+        // [CadService.cs]
         private static bool PrintExtent(Document doc, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, string fullPdfPath)
         {
+            if (PlotFactory.ProcessPlotState != ProcessPlotState.NotPlotting) return false;
+
             try
             {
                 using (PlotEngine engine = PlotFactory.CreatePublishEngine())
                 {
-                    PlotInfo plotInfo = BuildPlotInfo(null, layout, tb, config, doc.Database); // 注意：BuildPlotInfo 第一个参数传 null 即可
-                    PlotInfoValidator validator = new PlotInfoValidator();
-                    validator.MediaMatchingPolicy = MatchingPolicy.MatchEnabled;
+                    PlotInfo plotInfo = BuildPlotInfo(null, layout, tb, config, doc.Database);
+                    PlotInfoValidator validator = new PlotInfoValidator { MediaMatchingPolicy = MatchingPolicy.MatchEnabled };
                     validator.Validate(plotInfo);
 
                     engine.BeginPlot(null, null);
@@ -367,10 +449,39 @@ namespace CadAtlasManager
                     engine.EndPage(null);
                     engine.EndDocument(null);
                     engine.EndPlot(null);
-                    return true;
+
+                    // 【物理校验】：循环 5 秒等待文件出现且不再被驱动锁定
+                    return WaitForFileFinalized(fullPdfPath, 5000);
                 }
             }
-            catch { return false; }
+            catch (System.Exception ex)
+            {
+                doc.Editor.WriteMessage($"\n[打印错误] {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool WaitForFileFinalized(string filePath, int timeoutMs)
+        {
+            int elapsed = 0;
+            while (elapsed < timeoutMs)
+            {
+                if (File.Exists(filePath))
+                {
+                    try
+                    {
+                        // 尝试独占打开，成功则说明驱动已放开文件
+                        using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+                        {
+                            if (fs.Length > 0) return true;
+                        }
+                    }
+                    catch { }
+                }
+                System.Threading.Thread.Sleep(300);
+                elapsed += 300;
+            }
+            return false;
         }
         // [CadService.cs]
         /// <summary>
@@ -500,102 +611,106 @@ namespace CadAtlasManager
             doc.SendStringToExecute("_.PDFATTACH ", true, false, false);
         }
 
+        // [CadService.cs]
+
+        // [CadService.cs]
         public static int ManualPickAndPlot(Document doc, string outputDir, BatchPlotConfig config)
         {
             var ed = doc.Editor;
             int successCount = 0;
             string dwgPath = doc.Name;
 
+            // 1. 确保 CAD 窗口获得焦点，防止 GetSelection 立即返回
+            Autodesk.AutoCAD.ApplicationServices.Application.MainWindow.Focus();
+            doc.Window.Focus();
+
             using (doc.LockDocument())
             {
-                // 1. 弹出模式选择关键字
+                // 2. 选择模式
                 PromptKeywordOptions pko = new PromptKeywordOptions("\n请选择拾取模式 [手动框选矩形(W) / 框选块参照图框(B)] <W>: ");
                 pko.Keywords.Add("W", "W", "手动框选矩形(W)");
                 pko.Keywords.Add("B", "B", "框选块参照图框(B)");
                 pko.AllowNone = true;
 
                 var pkr = ed.GetKeywords(pko);
-                // 检查状态，如果用户取消则返回
                 if (pkr.Status != PromptStatus.OK && pkr.Status != PromptStatus.None) return 0;
-
-                // 【关键修正点】：将 pkr.StringGlobal 修改为 pkr.StringResult
                 string mode = (pkr.Status == PromptStatus.None || pkr.StringResult == "W") ? "W" : "B";
 
-                using (Transaction tr = doc.Database.TransactionManager.StartTransaction())
+                // 获取当前布局信息（短事务，查完即关）
+                ObjectId layoutId;
+                using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
-                    var layout = GetLayoutFromBtrId(tr, doc.Database, doc.Database.CurrentSpaceId);
-                    if (layout == null) return 0;
+                    var btr = tr.GetObject(doc.Database.CurrentSpaceId, OpenMode.ForRead) as BlockTableRecord;
+                    layoutId = btr.LayoutId;
+                    tr.Commit();
+                }
 
-                    if (mode == "W")
+                if (mode == "W")
+                {
+                    // --- 模式 A：循环手动框选 ---
+                    while (true)
                     {
-                        // --- 模式 A：传统手动框选矩形 ---
-                        while (true)
+                        var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [回车结束]: ");
+                        if (ppr1.Status != PromptStatus.OK) break;
+                        var ppr2 = ed.GetCorner("\n指定第二个角点: ", ppr1.Value);
+                        if (ppr2.Status != PromptStatus.OK) break;
+
+                        var tb = new TitleBlockInfo
                         {
-                            var ppr1 = ed.GetPoint("\n指定打印窗口的第一个角点 [回车结束]: ");
-                            if (ppr1.Status != PromptStatus.OK) break;
+                            Extents = new Extents3d(
+                                new Point3d(Math.Min(ppr1.Value.X, ppr2.Value.X), Math.Min(ppr1.Value.Y, ppr2.Value.Y), 0),
+                                new Point3d(Math.Max(ppr1.Value.X, ppr2.Value.X), Math.Max(ppr1.Value.Y, ppr2.Value.Y), 0)
+                            )
+                        };
 
-                            var ppr2 = ed.GetCorner("\n指定第二个角点: ", ppr1.Value);
-                            if (ppr2.Status != PromptStatus.OK) break;
-
-                            var tb = new TitleBlockInfo
+                        using (var tr = doc.Database.TransactionManager.StartTransaction())
+                        {
+                            var layout = tr.GetObject(layoutId, OpenMode.ForRead) as Layout;
+                            if (ExecuteSinglePrint(doc, layout, tb, config, outputDir, dwgPath, successCount + 1))
                             {
-                                Extents = new Extents3d(
-                                    new Point3d(Math.Min(ppr1.Value.X, ppr2.Value.X), Math.Min(ppr1.Value.Y, ppr2.Value.Y), 0),
-                                    new Point3d(Math.Max(ppr1.Value.X, ppr2.Value.X), Math.Max(ppr1.Value.Y, ppr2.Value.Y), 0)
-                                )
-                            };
-
-                            if (ExecuteSinglePrint(doc, layout, tb, config, outputDir, dwgPath, ++successCount))
+                                successCount++;
                                 PlotMetaManager.SavePlotRecord(dwgPath, Path.Combine(outputDir, $"{Path.GetFileNameWithoutExtension(dwgPath)}_{successCount:D2}.pdf"));
+                            }
+                            tr.Commit();
                         }
                     }
-                    else
+                }
+                else
+                {
+                    // --- 模式 B：框选块参照 ---
+                    PromptSelectionOptions pso = new PromptSelectionOptions();
+                    pso.MessageForAdding = "\n请选择图框对应的块参照或外部参照 (可多选): ";
+                    SelectionFilter filter = new SelectionFilter(new TypedValue[] { new TypedValue((int)DxfCode.Start, "INSERT") });
+
+                    var psr = ed.GetSelection(pso, filter);
+                    if (psr.Status == PromptStatus.OK)
                     {
-                        // --- 模式 B：框选参照图框 (块参照或外部参照) ---
-                        PromptSelectionOptions pso = new PromptSelectionOptions();
-                        pso.MessageForAdding = "\n请选择图框对应的块参照或外部参照 (可多选): ";
-
-                        SelectionFilter filter = new SelectionFilter(new TypedValue[] {
-        new TypedValue((int)DxfCode.Start, "INSERT")
-    });
-
-                        var psr = ed.GetSelection(pso, filter);
-                        if (psr.Status == PromptStatus.OK)
+                        var pickedBlocks = new List<TitleBlockInfo>();
+                        using (var tr = doc.Database.TransactionManager.StartTransaction())
                         {
-                            var pickedBlocks = new List<TitleBlockInfo>();
                             foreach (SelectedObject so in psr.Value)
                             {
-                                BlockReference br = tr.GetObject(so.ObjectId, OpenMode.ForRead) as BlockReference;
-                                if (br == null) continue;
-
-                                // --- 在这里添加 try-catch 保护 ---
-                                try
-                                {
-                                    pickedBlocks.Add(new TitleBlockInfo
-                                    {
-                                        BlockName = br.Name,
-                                        Extents = br.GeometricExtents // 这里最容易因为空块报错
-                                    });
-                                }
-                                catch
-                                {
-                                    // 如果块没有几何边界，打印一行提示并跳过它，防止程序崩溃
-                                    ed.WriteMessage($"\n[提示] 块 {br.Name} 无法获取有效边界，已跳过。");
-                                }
-                                // --------------------------------
+                                var br = tr.GetObject(so.ObjectId, OpenMode.ForRead) as BlockReference;
+                                if (br != null) try { pickedBlocks.Add(new TitleBlockInfo { BlockName = br.Name, Extents = br.GeometricExtents }); } catch { }
                             }
+                            tr.Commit();
+                        }
 
-                            // 按照配置的顺序（横向/纵向）对选中的块进行排序，确保页码顺序正确
-                            var sortedBlocks = SortTitleBlocks(pickedBlocks, config.OrderType);
-
-                            foreach (var tb in sortedBlocks)
+                        var sortedBlocks = SortTitleBlocks(pickedBlocks, config.OrderType);
+                        foreach (var tb in sortedBlocks)
+                        {
+                            using (var tr = doc.Database.TransactionManager.StartTransaction())
                             {
-                                if (ExecuteSinglePrint(doc, layout, tb, config, outputDir, dwgPath, ++successCount))
+                                var layout = tr.GetObject(layoutId, OpenMode.ForRead) as Layout;
+                                if (ExecuteSinglePrint(doc, layout, tb, config, outputDir, dwgPath, successCount + 1))
+                                {
+                                    successCount++;
                                     PlotMetaManager.SavePlotRecord(dwgPath, Path.Combine(outputDir, $"{Path.GetFileNameWithoutExtension(dwgPath)}_{successCount:D2}.pdf"));
+                                }
+                                tr.Commit();
                             }
                         }
                     }
-                    tr.Commit();
                 }
             }
             return successCount;
