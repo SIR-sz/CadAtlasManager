@@ -383,9 +383,10 @@
                         <DockPanel Grid.Column="0">
                             <TextBlock Text="📁 归档目录" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
                             <TreeView Name="PlotFolderTree" 
-                                      ItemTemplate="{StaticResource FileSystemTemplate}"
-                                      SelectedItemChanged="PlotFolderTree_SelectedItemChanged"
-                                      BorderThickness="1" BorderBrush="#eee" Background="White">
+          ItemTemplate="{StaticResource FileSystemTemplate}"
+          SelectedItemChanged="PlotFolderTree_SelectedItemChanged"
+          BorderThickness="1" BorderBrush="#eee" Background="White"
+          PreviewKeyDown="PlotInternal_KeyDown">
                                 <TreeView.ItemContainerStyle>
                                     <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                                         <Setter Property="IsExpanded" Value="True"/>
@@ -399,10 +400,11 @@
                         <DockPanel Grid.Column="2">
                             <TextBlock Text="📄 文件明细" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
                             <DataGrid Name="PlotFileList" 
-                                      AutoGenerateColumns="False" CanUserAddRows="False" 
-                                      GridLinesVisibility="Horizontal" Background="White" BorderBrush="#eee"
-                                      SelectionMode="Extended" MouseDoubleClick="PlotFileList_MouseDoubleClick"
-                                      ContextMenu="{StaticResource PlotContextMenu}">
+          AutoGenerateColumns="False" CanUserAddRows="False" 
+          GridLinesVisibility="Horizontal" Background="White" BorderBrush="#eee"
+          SelectionMode="Extended" MouseDoubleClick="PlotFileList_MouseDoubleClick"
+          ContextMenu="{StaticResource PlotContextMenu}"
+          PreviewKeyDown="PlotInternal_KeyDown">
                                 <DataGrid.ItemContainerStyle>
                                     <Style TargetType="DataGridRow">
                                         <Setter Property="IsSelected" Value="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>

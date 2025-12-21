@@ -210,8 +210,111 @@ namespace CadAtlasManager
             // 3. 恢复状态
             RestorePlotTreeState(PlotFolderItems, expandedPaths, _currentPlotFolderPath);
         }
+        // [AtlasView.xaml.cs]
+        // 处理图纸工作台的快捷键
+        // [AtlasView.xaml.cs] - 处理图纸工作台的快捷键
+        private void PlotInternal_KeyDown(object sender, KeyEventArgs e)
+        {
+            // 仅在“图纸工作台”选项卡激活时生效
+            if (MainTabControl.SelectedIndex != 2) return;
+
+            if ((e.Key == Key.C || e.Key == Key.X) && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                var selected = GetAllSelectedItems();
+                if (selected.Count > 0)
+                {
+                    var paths = new System.Collections.Specialized.StringCollection();
+                    foreach (var item in selected) paths.Add(item.FullPath);
+
+                    DataObject data = new DataObject();
+                    data.SetFileDropList(paths);
+
+                    if (e.Key == Key.X)
+                    {
+                        byte[] moveEffect = new byte[] { 2, 0, 0, 0 };
+                        MemoryStream dropEffect = new MemoryStream(moveEffect);
+                        data.SetData("Preferred DropEffect", dropEffect);
+                    }
+                    Clipboard.SetDataObject(data);
+                }
+                e.Handled = true;
+            }
+            else if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                // 调用你之前新增的图纸粘贴逻辑
+                ExecutePlotPaste();
+                e.Handled = true;
+            }
+        }
+        // [AtlasView.xaml.cs] - 这是一个完全新增的方法，请直接粘贴到类中
+        private void ExecutePlotPaste()
+        {
+            // 1. 检查系统剪贴板是否有文件
+            if (!Clipboard.ContainsFileDropList()) return;
+            var filePaths = Clipboard.GetFileDropList();
+
+            // 2. 确定目标目录（使用当前图纸工作台记录的路径）
+            string targetDir = _currentPlotFolderPath;
+            if (string.IsNullOrEmpty(targetDir) || !Directory.Exists(targetDir)) return;
+
+            // 3. 识别是否为“剪切”操作 (Move 效果)
+            bool isMove = false;
+            IDataObject data = Clipboard.GetDataObject();
+            if (data != null && data.GetDataPresent("Preferred DropEffect"))
+            {
+                using (MemoryStream ms = (MemoryStream)data.GetData("Preferred DropEffect"))
+                {
+                    if (ms.ReadByte() == 2) isMove = true;
+                }
+            }
+
+            Mouse.OverrideCursor = Cursors.Wait;
+            try
+            {
+                foreach (string sourcePath in filePaths)
+                {
+                    if (!File.Exists(sourcePath) && !Directory.Exists(sourcePath)) continue;
+
+                    string fileName = Path.GetFileName(sourcePath);
+                    string destPath = Path.Combine(targetDir, fileName);
+
+                    // 自动冲突处理：如果目标已存在，调用你已有的 GenerateInternalUniquePath 重命名
+                    if (File.Exists(destPath) || Directory.Exists(destPath))
+                    {
+                        destPath = GenerateInternalUniquePath(targetDir, fileName);
+                    }
+
+                    // 4. 执行物理文件操作
+                    if (File.Exists(sourcePath))
+                    {
+                        if (isMove) File.Move(sourcePath, destPath);
+                        else File.Copy(sourcePath, destPath);
+                    }
+                    else if (Directory.Exists(sourcePath))
+                    {
+                        if (targetDir.StartsWith(sourcePath, StringComparison.OrdinalIgnoreCase)) continue;
+
+                        if (isMove) Directory.Move(sourcePath, destPath);
+                        else CopyProjectDirInternal(sourcePath, destPath); // 调用你已有的递归复制
+                    }
+                }
+
+                if (isMove) Clipboard.Clear();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("图纸粘贴失败: " + ex.Message);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+                RefreshPlotTree(); // 刷新界面
+            }
+        }
+        // [AtlasView.xaml.cs] - 确保类中包含此方法
         private void ProjectInternal_KeyDown(object sender, KeyEventArgs e)
         {
+            // 仅在“项目工作台”选项卡激活时生效
             if (MainTabControl.SelectedIndex != 1) return;
 
             // Ctrl + C (复制) 或 Ctrl + X (剪切)
@@ -227,16 +330,16 @@ namespace CadAtlasManager
                     DataObject data = new DataObject();
                     data.SetFileDropList(paths);
 
-                    // 如果是剪切，设置 Preferred DropEffect 为 Move (这是 Windows 标准做法)
+                    // 如果是剪切，设置 Preferred DropEffect 为 Move
                     if (e.Key == Key.X)
                     {
-                        // 0x2 表示 Move (剪切), 0x5 表示 Copy (复制)
+                        // 0x2 表示 Move (剪切)
                         byte[] moveEffect = new byte[] { 2, 0, 0, 0 };
                         MemoryStream dropEffect = new MemoryStream(moveEffect);
                         data.SetData("Preferred DropEffect", dropEffect);
                     }
 
-                    // 放入系统剪贴板：这样你就可以在微信里直接 Ctrl+V 了
+                    // 放入系统剪贴板
                     Clipboard.SetDataObject(data);
                 }
                 e.Handled = true;
@@ -244,6 +347,7 @@ namespace CadAtlasManager
             // Ctrl + V (粘贴)
             else if (e.Key == Key.V && Keyboard.Modifiers == ModifierKeys.Control)
             {
+                // 调用项目工作台的粘贴逻辑
                 ExecuteExternalCompatiblePaste();
                 e.Handled = true;
             }
@@ -474,6 +578,7 @@ namespace CadAtlasManager
             }
             catch { }
         }
+
 
         // 全选/反选 按钮点击
         private void OnSelectAllPlotFiles_Click(object sender, RoutedEventArgs e)
