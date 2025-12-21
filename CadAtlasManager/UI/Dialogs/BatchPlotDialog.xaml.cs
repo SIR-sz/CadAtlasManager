@@ -11,6 +11,8 @@ namespace CadAtlasManager.UI
 {
     public partial class BatchPlotDialog : Window
     {
+        // --- 新增：标识是否为重印模式 ---
+        public bool IsReprintMode { get; set; } = false;
         private List<PlotCandidate> _candidates;
 
         // 供外部获取最终结果（如果需要）
@@ -86,13 +88,79 @@ namespace CadAtlasManager.UI
             };
         }
 
+        // [BatchPlotDialog.xaml.cs]
+
+        /// <summary>
+        /// 刷新指定目录下的目录文档
+        /// </summary>
+        private void UpdatePrintDirectoryLog(string targetDir)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(targetDir)) return;
+
+                // 1. 过滤成功项 (保持原有逻辑)
+                var successfulItemsInDir = _candidates
+                    .Where(c => c.IsSuccess == true)
+                    .Where(c =>
+                    {
+                        try
+                        {
+                            string dwgDir = System.IO.Path.GetDirectoryName(c.FilePath);
+                            string outDir = System.IO.Path.Combine(dwgDir, "_Plot");
+                            return string.Equals(System.IO.Path.GetFullPath(outDir),
+                                                 System.IO.Path.GetFullPath(targetDir),
+                                                 StringComparison.OrdinalIgnoreCase);
+                        }
+                        catch { return false; }
+                    })
+                    .ToList();
+
+                if (successfulItemsInDir.Count == 0) return;
+
+                // 2. 构造日志内容 (保持原有逻辑)
+                var logLines = new List<string>();
+                for (int i = 0; i < successfulItemsInDir.Count; i++)
+                {
+                    var item = successfulItemsInDir[i];
+                    int pageCount = ExtractPageCountFromStatus(item.Status);
+                    // --- 核心修改：去除文件名后缀 ---
+                    string nameWithoutExt = System.IO.Path.GetFileNameWithoutExtension(item.FileName);
+
+                    // 格式：序号 文件名(无后缀) 张数
+                    logLines.Add($"{i + 1} {nameWithoutExt} {pageCount}");
+                }
+
+                // --- 核心修改：根据模式决定文件名 ---
+                string fileName = IsReprintMode ? "打印目录重印部分.txt" : "打印目录.txt";
+                string logPath = System.IO.Path.Combine(targetDir, fileName);
+
+                // 3. 写入文件
+                System.IO.File.WriteAllLines(logPath, logLines, System.Text.Encoding.UTF8);
+            }
+            catch { }
+        }
+
+
+        /// <summary>
+        /// 从状态字符串中提取数字
+        /// </summary>
+        private int ExtractPageCountFromStatus(string status)
+        {
+            if (string.IsNullOrEmpty(status)) return 0;
+            var match = System.Text.RegularExpressions.Regex.Match(status, @"\((\d+)张\)");
+            if (match.Success && int.TryParse(match.Groups[1].Value, out int count))
+            {
+                return count;
+            }
+            return 0;
+        }
         // --- 核心修改2：开始批量自动打印 ---
+        // [BatchPlotDialog.xaml.cs]
+        // [BatchPlotDialog.xaml.cs]
         private async void BtnPrint_Click(object sender, RoutedEventArgs e)
         {
-            // --- 新增：确保打印前有活动窗口 ---
             CadService.EnsureHasActiveDocument();
-            // 启动前再次确保环境干净
-            CadService.ForceCleanup();
 
             var config = GetCurrentUiConfig();
             if (config == null) return;
@@ -101,18 +169,17 @@ namespace CadAtlasManager.UI
             if (selectedItems.Count == 0) return;
 
             var btn = sender as Button;
-            btn.IsEnabled = false; // 禁用按钮，防止打印中途再次点击
+            btn.IsEnabled = false;
 
-            foreach (var item in selectedItems)
+            // 记录本次操作涉及到的所有输出目录，以便后续统一刷新日志
+            var affectedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < selectedItems.Count; i++)
             {
-                // 1. 更新状态文字，此时还在主线程
+                var item = selectedItems[i];
                 item.Status = "正在打印...";
-
-
-                // --- 核心修复：自动滚动到当前正在打印的项目 ---
                 LvFiles.ScrollIntoView(item);
 
-                // 2. 重要：给 UI 线程刷新时间
                 await Task.Delay(100);
 
                 try
@@ -123,14 +190,15 @@ namespace CadAtlasManager.UI
                     if (!System.IO.Directory.Exists(outputDir))
                         System.IO.Directory.CreateDirectory(outputDir);
 
-                    // 【核心修复】：移除 Task.Run，直接在主线程调用
-                    // 虽然打印单个文件时 UI 会暂时无响应，但这在 AutoCAD 中是最安全、不会崩溃的做法
                     var results = CadService.BatchPlotByTitleBlocks(item.FilePath, outputDir, config);
 
                     if (results != null && results.Count > 0)
                     {
                         item.IsSuccess = true;
                         item.Status = $"成功({results.Count}张)";
+
+                        // 标记此目录需要更新日志
+                        affectedDirs.Add(outputDir);
                     }
                     else
                     {
@@ -142,12 +210,16 @@ namespace CadAtlasManager.UI
                 {
                     item.IsSuccess = false;
                     item.Status = "错误";
-                    // 在主线程中，可以安全地弹出报错信息
                     MessageBox.Show($"文件 {item.FileName} 打印失败：\n{ex.Message}");
                 }
 
-                // 3. 处理完一个文件后，再次短暂释放 CPU，让界面更新
                 await Task.Delay(50);
+            }
+
+            // --- 核心修改：批量任务结束后，统一刷新受影响目录的 txt 记录 ---
+            foreach (var dir in affectedDirs)
+            {
+                UpdatePrintDirectoryLog(dir);
             }
 
             btn.IsEnabled = true;
@@ -155,10 +227,12 @@ namespace CadAtlasManager.UI
         }
 
         // --- 核心修改3：手动打印按钮点击事件 ---
+        // [BatchPlotDialog.xaml.cs]
         private void BtnManualPlot_Click(object sender, RoutedEventArgs e)
         {
-            // --- 新增：确保开始前有背景窗口 ---
+            // --- 确保开始前有背景窗口 ---
             CadService.EnsureHasActiveDocument();
+
             var btn = sender as Button;
             var item = btn.DataContext as PlotCandidate;
             if (item == null) return;
@@ -174,21 +248,27 @@ namespace CadAtlasManager.UI
                 var doc = docMgr.Open(item.FilePath, false);
                 docMgr.MdiActiveDocument = doc;
 
-                // --- 核心修复：在这里定义 outputDir ---
+                // 定义输出目录
                 string directory = System.IO.Path.GetDirectoryName(item.FilePath);
                 string outputDir = System.IO.Path.Combine(directory, "_Plot");
 
                 if (!System.IO.Directory.Exists(outputDir))
                     System.IO.Directory.CreateDirectory(outputDir);
 
-                // 调用手动拾取服务，务必传递 outputDir
+                // 调用手动拾取服务
                 int count = CadService.ManualPickAndPlot(doc, outputDir, config);
 
                 if (count > 0)
                 {
+                    // 1. 更新当前项的状态
                     item.IsSuccess = true;
                     item.Status = $"手动成功({count}张)";
+
+                    // 2. 核心修改：立即刷新并重新排序生成该目录下的“打印目录.txt”
+                    // 这样无论这个文件在列表中第几个，都会按列表顺序重新编号记录
+                    UpdatePrintDirectoryLog(outputDir);
                 }
+
                 doc.CloseAndDiscard();
             }
             catch (Exception ex)

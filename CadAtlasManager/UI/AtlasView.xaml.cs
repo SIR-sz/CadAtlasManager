@@ -461,7 +461,7 @@ namespace CadAtlasManager
                 foreach (var file in Directory.GetFiles(folder.FullPath)) //
                 {
                     string ext = Path.GetExtension(file).ToLower();
-                    if (".pdf.jpg.jpeg.png.plt.tif.tiff".Contains(ext)) //
+                    if (".pdf.jpg.jpeg.png.plt.tif.tiff.txt".Contains(ext)) //
                     {
                         var item = CreateItem(file, ExplorerItemType.File); //
                         item.CreationDate = File.GetCreationTime(file).ToString("yyyy-MM-dd HH:mm"); //
@@ -1084,8 +1084,7 @@ namespace CadAtlasManager
             }
         }
 
-        // [添加至类: UI/AtlasView.xaml.cs]
-
+        // [AtlasView.xaml.cs 或对应的逻辑文件]
         private void BtnBatchPlotFromPlot_Click(object sender, RoutedEventArgs e)
         {
             if (_activeProject == null) return;
@@ -1111,7 +1110,7 @@ namespace CadAtlasManager
                 string plotDir = GetCurrentPlotDir();
                 if (PlotMetaManager.IsCombinedFile(plotDir, pdf.Name)) continue;
 
-                // 查找源 DWG 路径 (复用之前的查找逻辑)
+                // 查找源 DWG 路径
                 string realDwgName = PlotMetaManager.GetSourceDwgName(plotDir, pdf.Name);
                 if (string.IsNullOrEmpty(realDwgName))
                 {
@@ -1123,7 +1122,6 @@ namespace CadAtlasManager
 
                 if (!string.IsNullOrEmpty(dwgPath) && File.Exists(dwgPath))
                 {
-                    // 创建一个临时的 FileSystemItem 用于传递给打印准备函数
                     if (!dwgItemsForPlot.Any(i => i.FullPath.Equals(dwgPath, StringComparison.OrdinalIgnoreCase)))
                     {
                         dwgItemsForPlot.Add(CreateItem(dwgPath, ExplorerItemType.File));
@@ -1143,11 +1141,19 @@ namespace CadAtlasManager
 
             // 3. 调起打印对话框
             var candidates = PrepareCandidates(dwgItemsForPlot);
-            var dialog = new BatchPlotDialog(candidates) { Title = "图纸重印 - 批量打印设置" };
+
+            // --- 核心修改部分 ---
+            var dialog = new BatchPlotDialog(candidates)
+            {
+                Title = "图纸重印 - 批量打印设置 (重印模式)", // 修改标题增加识别度
+                IsReprintMode = true                           // 开启重印模式，触发生成“打印目录重印部分.txt”
+            };
 
             if (dialog.ShowDialog() != true) return;
 
-            // 4. 执行打印逻辑 (直接复用 MenuItem_BatchPlot_Click 中的核心打印部分)
+            // 4. 执行后续处理 (如果你的 ExecuteBatchPlotProcess 内部也会涉及生成目录，
+            // 请确保该方法也能感知到 IsReprintMode，但根据我们之前的修改，
+            // 目录生成逻辑已经集成在对话框内部的“开始打印”按钮中了)
             ExecuteBatchPlotProcess(dwgItemsForPlot, dialog.FinalConfig, dialog.ConfirmedFiles);
         }
 

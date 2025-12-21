@@ -763,9 +763,9 @@ namespace CadAtlasManager
                     // 这能防止 PlotSettingsValidator 等 API 因为缺少 Database 而崩溃
                     docMgr.Add("");
                 }
-                catch (System.Exception ex)
+                catch
                 {
-                    // 静默处理或记录日志
+                    // 静默处理
                 }
             }
         }
