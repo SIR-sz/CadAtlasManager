@@ -57,6 +57,8 @@ namespace CadAtlasManager
 
         private List<string> _projectInternalClipboard = new List<string>();// 专门用于项目工作台内部流转的剪贴板
 
+        private FileSystemItem _pendingBindingPdf = null; // 记录当前等待绑定的 PDF 对象
+
         private readonly List<string> _allowedExtensions = new List<string>
         {
             ".dwg", ".dxf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".wps", ".pdf", ".txt",
@@ -1710,6 +1712,127 @@ namespace CadAtlasManager
 
             return list;
         }
+        // --- 1. 图纸工作台右键触发：启动绑定流程 ---
+        private void MenuItem_BindExternalPdf_Click(object sender, RoutedEventArgs e)
+        {
+            // 获取当前在图纸工作台选中的 PDF 项
+            var item = PlotFileList.SelectedItem as FileSystemItem;
+            if (item == null || !item.Name.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("请先在列表中选择一个需要绑定的 PDF 文件。", "提示");
+                return;
+            }
+
+            // 记录待绑定对象并切换到“项目工作台”
+            _pendingBindingPdf = item;
+            MainTabControl.SelectedIndex = 1;
+
+            // 获取项目工作台的右键菜单并显示“确认绑定”相关的 UI
+            var contextMenu = this.Resources["ProjectFileContextMenu"] as ContextMenu;
+            if (contextMenu != null)
+            {
+                SetBindMenuVisibility(contextMenu, Visibility.Visible);
+            }
+
+            MessageBox.Show($"已进入绑定模式。\n\n当前待绑定文件: {item.Name}\n请在【项目工作台】找到对应的 DWG 源码文件，右键点击并选择【✅ 确认绑定 PDF】。", "绑定引导");
+        }
+
+        // --- 2. 辅助方法：统一控制绑定菜单项及其分隔线的显示/隐藏 ---
+        private void SetBindMenuVisibility(ContextMenu menu, Visibility visibility)
+        {
+            // 根据 Header 文字寻找“确认绑定”菜单项
+            var bindMenu = menu.Items.OfType<MenuItem>().FirstOrDefault(m => m.Header != null && m.Header.ToString().Contains("确认绑定"));
+            if (bindMenu != null) bindMenu.Visibility = visibility;
+
+            // 寻找在 XAML 中定义的名为 BindSeparator 的分隔符
+            var separator = menu.Items.OfType<Separator>().FirstOrDefault(s => s.Name == "BindSeparator");
+            if (separator != null) separator.Visibility = visibility;
+        }
+
+        // --- 3. 项目工作台右键触发：执行最终绑定 ---
+        private void MenuItem_ConfirmBind_Click(object sender, RoutedEventArgs e)
+        {
+            if (_pendingBindingPdf == null) return;
+
+            // 获取项目工作台当前选中的 DWG 文件
+            var dwgItem = ProjectFileList.SelectedItem as FileSystemItem;
+            if (dwgItem == null || !dwgItem.Name.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("请选择一个 DWG 图纸文件进行绑定。", "提示");
+                return;
+            }
+
+            string dwgPath = dwgItem.FullPath;
+            string oldPdfPath = _pendingBindingPdf.FullPath;
+            string pdfDir = Path.GetDirectoryName(oldPdfPath);
+
+            // 逻辑：处理文件名一致性（一对一原则）
+            string dwgNameNoExt = Path.GetFileNameWithoutExtension(dwgPath);
+            string newPdfName = dwgNameNoExt + ".pdf";
+            string finalPdfPath = Path.Combine(pdfDir, newPdfName);
+
+            // 如果文件名不匹配，提示重命名以符合系统规范
+            if (!newPdfName.Equals(_pendingBindingPdf.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                var res = MessageBox.Show($"检测到文件名不一致。是否将 PDF 重命名为:\n{newPdfName}？\n\n(建议重命名以确保系统能自动追踪版本状态)",
+                                          "绑定建议", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+
+                if (res == MessageBoxResult.Cancel) return;
+                if (res == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        if (File.Exists(finalPdfPath))
+                        {
+                            MessageBox.Show("绑定失败：目标目录下已存在同名 PDF 文件。");
+                            return;
+                        }
+                        File.Move(oldPdfPath, finalPdfPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("重命名文件失败: " + ex.Message);
+                        return;
+                    }
+                }
+                else
+                {
+                    finalPdfPath = oldPdfPath; // 用户选择不重命名，使用原始路径
+                }
+            }
+
+            // 执行指纹提取与持久化记录
+            try
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+
+                // 调用 SavePlotRecord，它会自动通过 CadService 静默提取 DWG 指纹并保存元数据
+                PlotMetaManager.SavePlotRecord(dwgPath, finalPdfPath);
+
+                // --- 收尾工作 ---
+                _pendingBindingPdf = null;
+                var contextMenu = this.Resources["ProjectFileContextMenu"] as ContextMenu;
+                if (contextMenu != null)
+                {
+                    SetBindMenuVisibility(contextMenu, Visibility.Collapsed);
+                }
+
+                MessageBox.Show("外部 PDF 绑定成功！该文件现在已纳入版本校验系统。");
+
+                // 刷新并切回图纸工作台
+                RefreshPlotTree();
+                MainTabControl.SelectedIndex = 2;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("绑定过程中发生错误: " + ex.Message);
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+        }
+
         private void CollectSelected(ObservableCollection<FileSystemItem> s, List<FileSystemItem> r) { if (s == null) return; foreach (var i in s) { if (i.IsItemSelected) r.Add(i); CollectSelected(i.Children, r); } }
         private void SelectRange(ObservableCollection<FileSystemItem> root, FileSystemItem s, FileSystemItem e) { var l = new List<FileSystemItem>(); FlattenTree(root, l); int i1 = l.IndexOf(s), i2 = l.IndexOf(e); if (i1 != -1 && i2 != -1) for (int i = Math.Min(i1, i2); i <= Math.Max(i1, i2); i++) l[i].IsItemSelected = true; }
         private void FlattenTree(ObservableCollection<FileSystemItem> n, List<FileSystemItem> r) { foreach (var node in n) { r.Add(node); if (node.IsExpanded) FlattenTree(node.Children, r); } }

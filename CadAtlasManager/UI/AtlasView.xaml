@@ -15,6 +15,8 @@
             <MenuItem Header="打开图纸" Click="MenuItem_Open_Click" FontWeight="Bold"/>
             <MenuItem Header="打开源 DWG 文件" Click="MenuItem_OpenSourceDwg_Click"/>
             <Separator/>
+            <MenuItem Header="🔗 绑定至源图纸..." Click="MenuItem_BindExternalPdf_Click" ToolTip="手动建立该 PDF 与源 DWG 的关联"/>
+            <Separator/>
             <MenuItem Header="删除图纸" Click="MenuItem_Delete_Click" Foreground="Red"/>
         </ContextMenu>
 
@@ -46,6 +48,9 @@
 
         <ContextMenu x:Key="ProjectFileContextMenu">
             <MenuItem Header="信息备注" Click="MenuItem_Remark_Click"/>
+            <MenuItem x:Name="MenuConfirmBind" Header="✅ 确认绑定 PDF" Click="MenuItem_ConfirmBind_Click" 
+              Visibility="Collapsed" Background="#FFF9ED" FontWeight="Bold"/>
+            <Separator x:Name="BindSeparator" Visibility="Collapsed"/>
             <MenuItem Header="一键打包" Click="MenuItem_Zip_Click"/>
             <MenuItem Header="删除文件" Click="MenuItem_Delete_Click" Foreground="Red"/>
             <MenuItem Header="插入图块" Click="MenuItem_InsertBlock_Click"/>
