@@ -36,7 +36,26 @@ namespace CadAtlasManager
         public ObservableCollection<FileSystemItem> PlotFileListItems { get; set; }
         private List<string> _loadedAtlasFolders = new List<string>();
         private ProjectItem _activeProject = null;
-        private readonly string _versionInfo = "CAD图集管理器 v3.6 (Refactored)\n\n更新：\n1. 代码结构重构优化\n2. 准备接入新功能";
+        private readonly string _versionInfo =
+        "                   CAD图集项目管理系统 v1.0\n" +
+
+        " 专为工程设计打造的图纸全生命周期管理平台\n\n" +
+        "【核心功能】\n\n" +
+        "① 智能批量打印\n" +
+        "   ● 自动识别图框、智能旋转与纸张匹配\n" +
+        "   ● 支持模型/布局空间及“自动+手动”混合模式\n\n" +
+        "② 项目化图档管理\n" +
+        "   ● 资料库 / 项目 / 成果 三级架构\n" +
+        "   ● 支持全格式文件管理、一键打包与备注系统\n\n" +
+        "③ 版本指纹校验\n" +
+        "   ● 实时监控 PDF 与 DWG 内容一致性\n" +
+        "   ● 智能标记“过期”图纸，源文件一键反查\n\n" +
+        "──────────────────────────\n" +
+        "  高效 · 安全 · 智能 — 支持定制拓展开发\n" +
+        "──────────────────────────\n\n" +
+        "作      者：lsz\n" +
+        "联系 QQ ：3956376422\n" +
+        "微信公众号：CAD与Office二次开发";
         private FileSystemItem _currentActiveItem = null;
         private FileSystemItem _lastActiveProjectItem = null; // 记录当前变红的文件夹
         // 放在 AtlasView 类内部
