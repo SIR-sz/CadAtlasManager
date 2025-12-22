@@ -286,78 +286,105 @@ namespace CadAtlasManager
                     .OrderBy(x => x.RoundedX).ThenByDescending(x => x.Info.Extents.MinPoint.Y).Select(x => x.Info).ToList();
             }
         }
-        // [CadService.cs] 修改后的 BuildPlotInfo
-        // --- 优化后的 BuildPlotInfo：修复内存崩溃 ---
-        // [CadService.cs]
-        private static PlotInfo BuildPlotInfo(Transaction tr, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, Database targetDb)
+        // [CadService.cs] 修复版：调整赋值顺序，防止 eInvalidInput
+        // [CadService.cs] 完整修复版：BuildPlotInfo (需修改调用处传入 Editor)
+        private static PlotInfo BuildPlotInfo(Editor ed, Transaction tr, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, Database targetDb)
         {
             PlotInfo info = new PlotInfo();
             info.Layout = layout.ObjectId;
 
-            // 1. 继承：克隆布局现有的设置（保留用户设好的 CTB、线宽开关等）
+            // 1. 白板模式：创建全新 Settings，不读取原布局
             PlotSettings settings = new PlotSettings(layout.ModelType);
-            settings.CopyFrom(layout);
-
             var psv = PlotSettingsValidator.Current;
 
-            // 2. 强制清洗（核心步骤）：
-            // 立即将打印机设为 "None"。这会强制 AutoCAD 卸载掉那个可能导致 eInvalidInput 的失效 PC3 路径。
-            // 使用 try-catch 包裹以防止部分极端病态图纸在重置时也报错
-            try
-            {
-                psv.SetPlotConfigurationName(settings, "None", null);
-                psv.RefreshLists(settings);
-            }
-            catch { /* 静默处理重置失败 */ }
+            // 2. 建立清洁环境
+            try { psv.SetPlotConfigurationName(settings, "None", null); } catch { }
 
-            // 3. 应用新配置：设置插件界面选中的真实打印机
+            // 3. 应用打印机
             try
             {
                 psv.SetPlotConfigurationName(settings, config.PrinterName, null);
             }
             catch (System.Exception ex)
             {
-                // 如果这里报错，说明插件选中的打印机在当前环境下不可用
                 throw new System.Exception($"无法应用打印机 [{config.PrinterName}]: {ex.Message}");
             }
 
-            // 4. 后续参数设置（保持原有逻辑）
+            // 3.1 强制设置单位为毫米
+            try { psv.SetPlotPaperUnits(settings, PlotPaperUnit.Millimeters); } catch { }
+
+            // 4. 应用样式表
+            if (!string.IsNullOrEmpty(config.StyleSheet) && config.PlotWithPlotStyles)
+            {
+                try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
+            }
+
+            // 5. 纸张匹配逻辑
             double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
             double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
 
-            // 自动匹配纸张
-            string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
-            if (!string.IsNullOrEmpty(matchedMedia))
-                psv.SetCanonicalMediaName(settings, matchedMedia);
-            else if (!string.IsNullOrEmpty(config.MediaName))
+            if (config.ForceUseSelectedMedia && !string.IsNullOrEmpty(config.MediaName))
             {
                 try { psv.SetCanonicalMediaName(settings, config.MediaName); } catch { }
             }
+            else
+            {
+                string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
+                if (!string.IsNullOrEmpty(matchedMedia))
+                    psv.SetCanonicalMediaName(settings, matchedMedia);
+                else if (!string.IsNullOrEmpty(config.MediaName))
+                    try { psv.SetCanonicalMediaName(settings, config.MediaName); } catch { }
+            }
 
-            // 设置打印样式表 (CTB)
-            if (!string.IsNullOrEmpty(config.StyleSheet))
-                try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
+            // 6. 设置打印区域 (核心修复：坐标转换 + 顺序调整)
+            Extents2d window;
+            if (layout.ModelType) // 如果是模型空间，必须进行 WCS -> DCS 转换
+            {
+                try
+                {
+                    Matrix3d matWcsToDcs = GetWcsToDcsMatrix(ed);
+                    Point3d minDcs = tb.Extents.MinPoint.TransformBy(matWcsToDcs);
+                    Point3d maxDcs = tb.Extents.MaxPoint.TransformBy(matWcsToDcs);
+                    window = new Extents2d(
+                        Math.Min(minDcs.X, maxDcs.X),
+                        Math.Min(minDcs.Y, maxDcs.Y),
+                        Math.Max(minDcs.X, maxDcs.X),
+                        Math.Max(minDcs.Y, maxDcs.Y)
+                    );
+                }
+                catch
+                {
+                    // 转换失败兜底：使用原始坐标
+                    window = new Extents2d(
+                        new Point2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y),
+                        new Point2d(tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y)
+                    );
+                }
+            }
+            else // 布局空间直接使用图纸坐标
+            {
+                window = new Extents2d(
+                    new Point2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y),
+                    new Point2d(tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y)
+                );
+            }
 
-            // 设置打印窗口区域
-            psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
-            // 【建议】：强制 Z 轴归零，防止大坐标 Z 轴干扰计算
-            Extents2d window = new Extents2d(
-                new Point2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y),
-                new Point2d(tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y)
-            );
+            // 先设置 WindowArea，再设置 PlotType，防止 eInvalidInput
             psv.SetPlotWindowArea(settings, window);
+            psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
 
-            // 旋转逻辑
-            psv.SetPlotRotation(settings, PlotRotation.Degrees000);
+            // 7. 自动旋转
+            psv.SetPlotRotation(settings, Autodesk.AutoCAD.DatabaseServices.PlotRotation.Degrees000);
             if (config.AutoRotate)
             {
                 double paperW = settings.PlotPaperSize.X;
                 double paperH = settings.PlotPaperSize.Y;
                 if ((blockH > blockW) != (paperH > paperW))
-                    psv.SetPlotRotation(settings, PlotRotation.Degrees090);
+                    psv.SetPlotRotation(settings, Autodesk.AutoCAD.DatabaseServices.PlotRotation.Degrees090);
             }
 
-            // 比例与偏移
+            // 8. 比例与偏移
+            psv.SetUseStandardScale(settings, false);
             if (config.ScaleType == "Fit")
             {
                 psv.SetStdScaleType(settings, StdScaleType.ScaleToFit);
@@ -365,10 +392,11 @@ namespace CadAtlasManager
             }
             else
             {
-                CustomScale scale = ParseCustomScale(config.ScaleType);
-                psv.SetCustomPrintScale(settings, scale);
+                psv.SetCustomPrintScale(settings, ParseCustomScale(config.ScaleType));
                 if (config.PlotCentered)
+                {
                     psv.SetPlotCentered(settings, true);
+                }
                 else
                 {
                     psv.SetPlotCentered(settings, false);
@@ -376,11 +404,38 @@ namespace CadAtlasManager
                 }
             }
 
+            // 9. 应用高级选项
+            settings.PrintLineweights = config.PlotWithLineweights;
+            settings.PlotTransparency = config.PlotTransparency;
+            settings.ShowPlotStyles = config.PlotWithPlotStyles;
+            settings.ShadePlot = PlotSettingsShadePlotType.AsDisplayed;
+            settings.ShadePlotResLevel = ShadePlotResLevel.Normal;
+
             psv.RefreshLists(settings);
             info.OverrideSettings = settings;
             return info;
         }
+        // [CadService.cs] 修正版：获取 WCS 到 DCS 的转换矩阵
+        private static Matrix3d GetWcsToDcsMatrix(Editor ed)
+        {
+            // 【修正点】Editor 没有 ActiveViewport 属性，必须使用 GetCurrentView()
+            using (ViewTableRecord vtr = ed.GetCurrentView())
+            {
+                // 1. 平移：将目标点 (Target) 移到原点
+                Matrix3d matDisplace = Matrix3d.Displacement(vtr.Target.GetAsVector().Negate());
 
+                // 2. 投影：将世界坐标系投影到视平面 (World -> Plane)
+                // Plane 的法向量是 ViewDirection，原点设为 (0,0,0) 因为我们已经做过平移了
+                Matrix3d matPlane = Matrix3d.WorldToPlane(new Plane(Point3d.Origin, vtr.ViewDirection));
+
+                // 3. 扭曲：处理视图扭曲角度 (ViewTwist)
+                // 在 DCS 中，Twist 是绕 Z 轴旋转
+                Matrix3d matTwist = Matrix3d.Rotation(-vtr.ViewTwist, Vector3d.ZAxis, Point3d.Origin);
+
+                // 组合矩阵：先平移，再投影，最后扭曲 (注意乘法顺序是从右向左应用)
+                return matTwist * matPlane * matDisplace;
+            }
+        }
         // --- 增强的文件检测逻辑 ---
         private static bool WaitForFileAndVerify(string filePath, int timeoutMs)
         {
@@ -505,7 +560,10 @@ namespace CadAtlasManager
             {
                 // 步骤 1: 构建 PlotInfo
                 ed.WriteMessage("\n[诊断] 步骤 1: 正在构建 PlotInfo...");
+
+                // 【修改点】：使用 BuildPlotInfoWithLog，只需要传入 ed, layout, tb, config
                 PlotInfo plotInfo = BuildPlotInfoWithLog(ed, layout, tb, config);
+
                 ed.WriteMessage("\n[诊断] 步骤 1: PlotInfo 构建成功");
 
                 // 步骤 2: 验证 PlotInfo
@@ -549,105 +607,135 @@ namespace CadAtlasManager
             }
         }
 
+        // [CadService.cs] 修复版 (带日志)
+        // [CadService.cs] 完整修复版：BuildPlotInfoWithLog
         private static PlotInfo BuildPlotInfoWithLog(Editor ed, Layout layout, TitleBlockInfo tb, BatchPlotConfig config)
         {
             PlotInfo info = new PlotInfo();
             info.Layout = layout.ObjectId;
 
-            // 1. 创建全新的设置对象
             PlotSettings settings = new PlotSettings(layout.ModelType);
             var psv = PlotSettingsValidator.Current;
 
-            // 2. 建立健康的驱动环境
-            ed.WriteMessage($"\n  - [Sub] 正在建立清洁环境，设置驱动: {config.PrinterName}");
-            psv.SetPlotConfigurationName(settings, config.PrinterName, null);
-            psv.RefreshLists(settings);
+            ed.WriteMessage($"\n  - [Sub] 重构模式: 正在创建全新打印配置...");
 
-            // 3. 初始化参数
-            psv.SetPlotPaperUnits(settings, Autodesk.AutoCAD.DatabaseServices.PlotPaperUnit.Millimeters);
-            psv.SetPlotOrigin(settings, new Autodesk.AutoCAD.Geometry.Point2d(0, 0));
-            psv.SetStdScaleType(settings, Autodesk.AutoCAD.DatabaseServices.StdScaleType.StdScale1To1);
+            // 2. 清洁环境
+            try { psv.SetPlotConfigurationName(settings, "None", null); } catch { }
 
-            // 4. 同步样式设置
-            if (!string.IsNullOrEmpty(layout.CurrentStyleSheet))
+            // 3. 应用打印机
+            ed.WriteMessage($"\n  - [Sub] 应用打印机: {config.PrinterName}");
+            try
             {
-                try { psv.SetCurrentStyleSheet(settings, layout.CurrentStyleSheet); } catch { }
+                psv.SetPlotConfigurationName(settings, config.PrinterName, null);
             }
-            settings.ShowPlotStyles = true;
-            settings.PrintLineweights = true;
-            settings.DrawViewportsFirst = true;
+            catch (System.Exception ex)
+            {
+                throw new System.Exception($"无法应用打印机 [{config.PrinterName}]: {ex.Message}");
+            }
 
-            // 5. 匹配纸张 (核心修改部分)
+            // 3.1 设置单位
+            try { psv.SetPlotPaperUnits(settings, PlotPaperUnit.Millimeters); } catch { }
+
+            // 4. 应用样式表
+            if (!string.IsNullOrEmpty(config.StyleSheet) && config.PlotWithPlotStyles)
+            {
+                try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
+            }
+
+            // 5. 纸张匹配
             double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
             double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
 
-            // --- 修改逻辑开始 ---
             if (config.ForceUseSelectedMedia && !string.IsNullOrEmpty(config.MediaName))
             {
-                // 分支 A: 用户启用了“锁定纸张”，强制使用选定的纸张，跳过自动匹配
-                ed.WriteMessage($"\n  - [Sub] 用户锁定了纸张，跳过尺寸自动匹配，强制应用: {config.MediaName}");
-                try
-                {
-                    psv.SetCanonicalMediaName(settings, config.MediaName);
-                }
+                ed.WriteMessage($"\n  - [Sub] 锁定纸张模式，强制应用: {config.MediaName}");
+                try { psv.SetCanonicalMediaName(settings, config.MediaName); }
                 catch (System.Exception ex)
                 {
-                    ed.WriteMessage($"\n  - [警告] 强制应用纸张 {config.MediaName} 失败: {ex.Message}，将尝试回退到自动匹配。");
-                    // 兜底：如果强制设置失败（例如切了打印机导致纸张名无效），尝试回退到自动匹配
+                    ed.WriteMessage($"\n  - [警告] 强制应用纸张失败: {ex.Message}，尝试自动匹配...");
                     ApplyAutoMatchMedia(ed, settings, psv, blockW, blockH);
                 }
             }
             else
             {
-                // 分支 B: 默认逻辑，优先自动匹配
                 ApplyAutoMatchMedia(ed, settings, psv, blockW, blockH, config.MediaName);
             }
-            // --- 修改逻辑结束 ---
 
-            // 6. 预设窗口坐标
-            Autodesk.AutoCAD.DatabaseServices.Extents2d window = new Autodesk.AutoCAD.DatabaseServices.Extents2d(
-                Math.Min(tb.Extents.MinPoint.X, tb.Extents.MaxPoint.X),
-                Math.Min(tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.Y),
-                Math.Max(tb.Extents.MinPoint.X, tb.Extents.MaxPoint.X),
-                Math.Max(tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.Y)
-            );
+            // 6. 设置打印区域 (核心修复：坐标转换 + 顺序调整)
+            Extents2d window;
+            if (layout.ModelType) // 模型空间需转换
+            {
+                ed.WriteMessage($"\n  - [Sub] 检测到模型空间，正在执行 WCS->DCS 坐标转换...");
+                try
+                {
+                    Matrix3d matWcsToDcs = GetWcsToDcsMatrix(ed);
+                    Point3d minDcs = tb.Extents.MinPoint.TransformBy(matWcsToDcs);
+                    Point3d maxDcs = tb.Extents.MaxPoint.TransformBy(matWcsToDcs);
+                    window = new Extents2d(
+                        Math.Min(minDcs.X, maxDcs.X),
+                        Math.Min(minDcs.Y, maxDcs.Y),
+                        Math.Max(minDcs.X, maxDcs.X),
+                        Math.Max(minDcs.Y, maxDcs.Y)
+                    );
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\n  - [警告] 坐标转换失败: {ex.Message}，将使用原始坐标。");
+                    window = new Extents2d(
+                        new Point2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y),
+                        new Point2d(tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y)
+                    );
+                }
+            }
+            else // 布局空间
+            {
+                window = new Extents2d(
+                    new Point2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y),
+                    new Point2d(tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y)
+                );
+            }
+
+            // 先设置 WindowArea，再设置 PlotType
             psv.SetPlotWindowArea(settings, window);
-
-            // 7. 切换 PlotType 为 Window
             psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
 
-            // 8. 旋转控制 (自动旋转逻辑)
+            // 7. 自动旋转
             psv.SetPlotRotation(settings, Autodesk.AutoCAD.DatabaseServices.PlotRotation.Degrees000);
-
             if (config.AutoRotate)
             {
                 double paperW = settings.PlotPaperSize.X;
                 double paperH = settings.PlotPaperSize.Y;
-
-                ed.WriteMessage($"\n  - [Sub] 旋转校验: 图框({blockW:F0}x{blockH:F0}) vs 纸张({paperW:F0}x{paperH:F0})");
-
-                if ((blockW > blockH) != (paperW > paperH))
+                if ((blockH > blockW) != (paperH > paperW))
                 {
-                    ed.WriteMessage("\n  - [Sub] 检测到方向不匹配，正在执行旋转 90 度...");
+                    ed.WriteMessage("\n  - [Sub] 智能旋转: 旋转 90 度以适应纸张。");
                     psv.SetPlotRotation(settings, Autodesk.AutoCAD.DatabaseServices.PlotRotation.Degrees090);
-                }
-                else
-                {
-                    ed.WriteMessage("\n  - [Sub] 方向已匹配，保持 0 度。");
                 }
             }
 
-            // 9. 设置最终比例与居中
+            // 8. 比例与偏移
             if (config.ScaleType == "Fit")
             {
-                psv.SetStdScaleType(settings, Autodesk.AutoCAD.DatabaseServices.StdScaleType.ScaleToFit);
+                psv.SetStdScaleType(settings, StdScaleType.ScaleToFit);
                 psv.SetPlotCentered(settings, true);
             }
             else
             {
                 psv.SetCustomPrintScale(settings, ParseCustomScale(config.ScaleType));
                 psv.SetPlotCentered(settings, config.PlotCentered);
+                if (!config.PlotCentered)
+                {
+                    psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY));
+                }
             }
+
+            // 9. 高级选项
+            settings.PrintLineweights = config.PlotWithLineweights;
+            settings.PlotTransparency = config.PlotTransparency;
+            settings.ShowPlotStyles = config.PlotWithPlotStyles;
+            settings.ShadePlot = PlotSettingsShadePlotType.AsDisplayed;
+            settings.ShadePlotResLevel = ShadePlotResLevel.Normal;
+
+            ed.WriteMessage($"\n  - [Sub] 高级选项已应用: 线宽={config.PlotWithLineweights}, 透明度={config.PlotTransparency}");
 
             psv.RefreshLists(settings);
             info.OverrideSettings = settings;

@@ -30,7 +30,14 @@
         public double OffsetX { get; set; } = 0.0;
         public double OffsetY { get; set; } = 0.0;
 
-        // 是否居中打印 (如果设置了偏移，通常此项为 false)
+        // 是否居中打印
         public bool PlotCentered { get; set; } = true;
+
+        // --- 2.0 重构新增：打印选项 (Clean Slate 模式) ---
+        // 默认打印线宽，不打印透明度(提升速度)，使用样式表
+        public bool PlotWithLineweights { get; set; } = true;
+        public bool PlotTransparency { get; set; } = false;
+        public bool PlotWithPlotStyles { get; set; } = true;
+        public bool HidePaperspaceObjects { get; set; } = false;
     }
 }

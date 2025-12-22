@@ -60,6 +60,14 @@ namespace CadAtlasManager.UI
 
             if (config.LastOrderType == PlotOrderType.Vertical) RbOrderV.IsChecked = true;
             else RbOrderH.IsChecked = true;
+            // ============== 新增：填充比例下拉框预设值 ==============
+            var scalePresets = new List<string>
+            {
+                "1:1",
+                "1:2", "1:4", "1:5", "1:8", "1:10", "1:16", "1:20", "1:30", "1:40", "1:50", "1:100",
+                "2:1", "4:1", "8:1", "10:1", "100:1"
+            };
+            CbScale.ItemsSource = scalePresets;
 
             ChkFitToPaper.IsChecked = config.LastFitToPaper;
             CbScale.Text = !string.IsNullOrEmpty(config.LastScaleType) ? config.LastScaleType : "1:1";
@@ -67,6 +75,7 @@ namespace CadAtlasManager.UI
             TbOffsetX.Text = config.LastOffsetX.ToString();
             TbOffsetY.Text = config.LastOffsetY.ToString();
             ChkAutoRotate.IsChecked = config.LastAutoRotate;
+
         }
 
         // --- 核心修改1：实时从 UI 抓取配置的方法 ---
@@ -93,8 +102,12 @@ namespace CadAtlasManager.UI
                 PlotCentered = ChkCenterPlot.IsChecked == true,
                 OffsetX = offX,
                 OffsetY = offY,
-                // --- 新增：读取锁定开关状态 ---
-                ForceUseSelectedMedia = ChkLockPaper.IsChecked == true
+                ForceUseSelectedMedia = ChkLockPaper.IsChecked == true,
+
+                // --- 新增：读取 UI 上的打印选项 ---
+                PlotWithLineweights = ChkPlotLineweights.IsChecked == true,
+                PlotTransparency = ChkPlotTransparency.IsChecked == true,
+                PlotWithPlotStyles = ChkPlotStyles.IsChecked == true
             };
         }
 

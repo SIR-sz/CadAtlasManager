@@ -114,6 +114,15 @@
                         </Grid>
                     </GroupBox>
 
+                    <GroupBox Header="打印选项" Margin="0,5">
+                        <UniformGrid Columns="2" Margin="5">
+                            <CheckBox x:Name="ChkPlotLineweights" Content="打印对象线宽" IsChecked="True" Margin="0,5"/>
+                            <CheckBox x:Name="ChkPlotTransparency" Content="打印透明度" IsChecked="False" Margin="0,5"
+                                      ToolTip="勾选后处理速度可能会变慢"/>
+                            <CheckBox x:Name="ChkPlotStyles" Content="使用打印样式" IsChecked="True" Margin="0,5"/>
+                        </UniformGrid>
+                    </GroupBox>
+
                     <DockPanel Margin="0,10,0,8">
                         <TextBlock Text="📄 默认纸张" FontWeight="Bold" VerticalAlignment="Center"/>
                         <CheckBox x:Name="ChkLockPaper" Content="锁定" Margin="10,0,0,0" VerticalAlignment="Center" 
