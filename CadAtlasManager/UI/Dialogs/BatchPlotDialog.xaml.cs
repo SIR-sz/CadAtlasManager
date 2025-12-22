@@ -11,6 +11,8 @@ namespace CadAtlasManager.UI
 {
     public partial class BatchPlotDialog : Window
     {
+        // 1. 定义取消标记
+        private bool _isCancelRequested = false;
         // --- 新增：标识是否为重印模式 ---
         public bool IsReprintMode { get; set; } = false;
         private List<PlotCandidate> _candidates;
@@ -32,6 +34,12 @@ namespace CadAtlasManager.UI
             UpdateScaleUiState();
         }
 
+        // 3. “取消打印”按钮逻辑
+        private void BtnCancelPlot_Click(object sender, RoutedEventArgs e)
+        {
+            _isCancelRequested = true;
+            BtnCancelPlot.IsEnabled = false; // 立即禁用防止重复点击
+        }
         private void LoadInitialData()
         {
             // --- 新增：确保此时 CAD 中至少有一个活动文档 ---
@@ -156,8 +164,6 @@ namespace CadAtlasManager.UI
             return 0;
         }
         // --- 核心修改2：开始批量自动打印 ---
-        // [BatchPlotDialog.xaml.cs]
-        // [BatchPlotDialog.xaml.cs]
         private async void BtnPrint_Click(object sender, RoutedEventArgs e)
         {
             CadService.EnsureHasActiveDocument();
@@ -168,18 +174,29 @@ namespace CadAtlasManager.UI
             var selectedItems = _candidates.Where(c => c.IsSelected).ToList();
             if (selectedItems.Count == 0) return;
 
-            var btn = sender as Button;
-            btn.IsEnabled = false;
+            // --- UI 状态切换 ---
+            _isCancelRequested = false;
+            BtnPrint.IsEnabled = false;
+            BtnCancelPlot.IsEnabled = true;
 
-            // 记录本次操作涉及到的所有输出目录，以便后续统一刷新日志
             var affectedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             for (int i = 0; i < selectedItems.Count; i++)
             {
                 var item = selectedItems[i];
+
+                // --- 检查取消标记 ---
+                if (_isCancelRequested)
+                {
+                    item.IsSuccess = false;
+                    item.Status = "任务取消";
+                    continue;
+                }
+
                 item.Status = "正在打印...";
                 LvFiles.ScrollIntoView(item);
 
+                // 重要：这里的 Delay 会释放 UI 线程，让“取消”按钮的点击事件能够被触发
                 await Task.Delay(100);
 
                 try
@@ -190,14 +207,14 @@ namespace CadAtlasManager.UI
                     if (!System.IO.Directory.Exists(outputDir))
                         System.IO.Directory.CreateDirectory(outputDir);
 
+                    // --- 核心修复：直接调用，不再使用 Task.Run ---
+                    // 这样它就在 AutoCAD 的主线程中安全运行
                     var results = CadService.BatchPlotByTitleBlocks(item.FilePath, outputDir, config);
 
                     if (results != null && results.Count > 0)
                     {
                         item.IsSuccess = true;
                         item.Status = $"成功({results.Count}张)";
-
-                        // 标记此目录需要更新日志
                         affectedDirs.Add(outputDir);
                     }
                     else
@@ -210,19 +227,21 @@ namespace CadAtlasManager.UI
                 {
                     item.IsSuccess = false;
                     item.Status = "错误";
-                    MessageBox.Show($"文件 {item.FileName} 打印失败：\n{ex.Message}");
+                    // 如果仍然报错，取消下面一行的注释查看具体报错原因
+                    // MessageBox.Show($"文件 {item.FileName} 打印失败：\n{ex.Message}");
                 }
 
+                // 处理完一个文件后稍作停顿，确保 UI 刷新
                 await Task.Delay(50);
             }
 
-            // --- 核心修改：批量任务结束后，统一刷新受影响目录的 txt 记录 ---
             foreach (var dir in affectedDirs)
             {
                 UpdatePrintDirectoryLog(dir);
             }
 
-            btn.IsEnabled = true;
+            BtnPrint.IsEnabled = true;
+            BtnCancelPlot.IsEnabled = false;
             SaveCurrentConfig(config);
         }
 

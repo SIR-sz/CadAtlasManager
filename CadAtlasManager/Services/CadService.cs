@@ -578,13 +578,28 @@ namespace CadAtlasManager
             settings.DrawViewportsFirst = true;
 
             // 5. 匹配纸张
+            // 5. 匹配纸张
             double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
             double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
             string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
+
             if (!string.IsNullOrEmpty(matchedMedia))
             {
-                ed.WriteMessage($"\n  - [Sub] 匹配并应用纸张: {matchedMedia}");
+                ed.WriteMessage($"\n  - [Sub] 自动匹配到标准纸张: {matchedMedia}");
                 psv.SetCanonicalMediaName(settings, matchedMedia);
+            }
+            else if (!string.IsNullOrEmpty(config.MediaName))
+            {
+                // --- 新增逻辑：如果自动匹配失败，使用用户预设纸张 ---
+                try
+                {
+                    ed.WriteMessage($"\n  - [Sub] 未匹配到标准纸张，正在尝试应用预设纸张: {config.MediaName}");
+                    psv.SetCanonicalMediaName(settings, config.MediaName);
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\n  - [警告] 预设纸张 {config.MediaName} 对当前打印机无效: {ex.Message}");
+                }
             }
 
             // 6. 预设窗口坐标
