@@ -92,7 +92,9 @@ namespace CadAtlasManager.UI
                 ScaleType = scaleStr,
                 PlotCentered = ChkCenterPlot.IsChecked == true,
                 OffsetX = offX,
-                OffsetY = offY
+                OffsetY = offY,
+                // --- 新增：读取锁定开关状态 ---
+                ForceUseSelectedMedia = ChkLockPaper.IsChecked == true
             };
         }
 
@@ -223,7 +225,7 @@ namespace CadAtlasManager.UI
                         item.Status = "未识别到图框";
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     item.IsSuccess = false;
                     item.Status = "错误";
@@ -316,6 +318,10 @@ namespace CadAtlasManager.UI
                 config.LastCenterPlot = final.PlotCentered;
                 config.LastOffsetX = final.OffsetX;
                 config.LastOffsetY = final.OffsetY;
+
+                // --- 如果你在 AppConfig 里加了字段，就在这里保存 ---
+                // config.LastForceUseSelectedMedia = final.ForceUseSelectedMedia; 
+
                 ConfigManager.Save(config);
             }
             catch { }

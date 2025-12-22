@@ -15,6 +15,9 @@
         public string TitleBlockNames { get; set; }
         public bool AutoRotate { get; set; }
 
+        // --- 新增功能：是否强制使用用户选定的纸张（不进行自动匹配） ---
+        public bool ForceUseSelectedMedia { get; set; } = false;
+
         // --- 新增设置 ---
 
         // 打印顺序
@@ -22,10 +25,6 @@
 
         // 打印比例模式: "Fit" (布满), "1:1", "1:100" 等
         public string ScaleType { get; set; } = "Fit";
-
-        // 自定义比例值 (例如 1:100，则该值为 0.01，或者存分母 100)
-        // 为了简化，我们假设 ScaleType 存的是 "1:1" 这种字符串，或者 "Custom"
-        // 这里简单起见，我们主要处理 "Fit" 和 "1:1" 以及自定义偏移
 
         // 打印偏移 (毫米)
         public double OffsetX { get; set; } = 0.0;

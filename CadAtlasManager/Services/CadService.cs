@@ -577,30 +577,32 @@ namespace CadAtlasManager
             settings.PrintLineweights = true;
             settings.DrawViewportsFirst = true;
 
-            // 5. 匹配纸张
-            // 5. 匹配纸张
+            // 5. 匹配纸张 (核心修改部分)
             double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
             double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
-            string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
 
-            if (!string.IsNullOrEmpty(matchedMedia))
+            // --- 修改逻辑开始 ---
+            if (config.ForceUseSelectedMedia && !string.IsNullOrEmpty(config.MediaName))
             {
-                ed.WriteMessage($"\n  - [Sub] 自动匹配到标准纸张: {matchedMedia}");
-                psv.SetCanonicalMediaName(settings, matchedMedia);
-            }
-            else if (!string.IsNullOrEmpty(config.MediaName))
-            {
-                // --- 新增逻辑：如果自动匹配失败，使用用户预设纸张 ---
+                // 分支 A: 用户启用了“锁定纸张”，强制使用选定的纸张，跳过自动匹配
+                ed.WriteMessage($"\n  - [Sub] 用户锁定了纸张，跳过尺寸自动匹配，强制应用: {config.MediaName}");
                 try
                 {
-                    ed.WriteMessage($"\n  - [Sub] 未匹配到标准纸张，正在尝试应用预设纸张: {config.MediaName}");
                     psv.SetCanonicalMediaName(settings, config.MediaName);
                 }
                 catch (System.Exception ex)
                 {
-                    ed.WriteMessage($"\n  - [警告] 预设纸张 {config.MediaName} 对当前打印机无效: {ex.Message}");
+                    ed.WriteMessage($"\n  - [警告] 强制应用纸张 {config.MediaName} 失败: {ex.Message}，将尝试回退到自动匹配。");
+                    // 兜底：如果强制设置失败（例如切了打印机导致纸张名无效），尝试回退到自动匹配
+                    ApplyAutoMatchMedia(ed, settings, psv, blockW, blockH);
                 }
             }
+            else
+            {
+                // 分支 B: 默认逻辑，优先自动匹配
+                ApplyAutoMatchMedia(ed, settings, psv, blockW, blockH, config.MediaName);
+            }
+            // --- 修改逻辑结束 ---
 
             // 6. 预设窗口坐标
             Autodesk.AutoCAD.DatabaseServices.Extents2d window = new Autodesk.AutoCAD.DatabaseServices.Extents2d(
@@ -614,21 +616,16 @@ namespace CadAtlasManager
             // 7. 切换 PlotType 为 Window
             psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
 
-            // ============================================================
-            // 【核心修复】：重新加入旋转控制逻辑
-            // ============================================================
-            // 先默认不旋转
+            // 8. 旋转控制 (自动旋转逻辑)
             psv.SetPlotRotation(settings, Autodesk.AutoCAD.DatabaseServices.PlotRotation.Degrees000);
 
             if (config.AutoRotate)
             {
-                // 重新获取应用纸张后的物理尺寸
                 double paperW = settings.PlotPaperSize.X;
                 double paperH = settings.PlotPaperSize.Y;
 
                 ed.WriteMessage($"\n  - [Sub] 旋转校验: 图框({blockW:F0}x{blockH:F0}) vs 纸张({paperW:F0}x{paperH:F0})");
 
-                // 逻辑：如果“图框是横的而纸张是纵的”或者“图框是纵的而纸张是横的”，则旋转 90 度
                 if ((blockW > blockH) != (paperW > paperH))
                 {
                     ed.WriteMessage("\n  - [Sub] 检测到方向不匹配，正在执行旋转 90 度...");
@@ -639,9 +636,8 @@ namespace CadAtlasManager
                     ed.WriteMessage("\n  - [Sub] 方向已匹配，保持 0 度。");
                 }
             }
-            // ============================================================
 
-            // 8. 设置最终比例与居中
+            // 9. 设置最终比例与居中
             if (config.ScaleType == "Fit")
             {
                 psv.SetStdScaleType(settings, Autodesk.AutoCAD.DatabaseServices.StdScaleType.ScaleToFit);
@@ -656,6 +652,30 @@ namespace CadAtlasManager
             psv.RefreshLists(settings);
             info.OverrideSettings = settings;
             return info;
+        }
+
+        // 为了代码整洁，提取出来的自动匹配辅助方法 (请将此方法也添加到 CadService 类中)
+        private static void ApplyAutoMatchMedia(Editor ed, PlotSettings settings, PlotSettingsValidator psv, double w, double h, string fallbackMedia = null)
+        {
+            string matchedMedia = FindMatchingMedia(settings, psv, w, h);
+
+            if (!string.IsNullOrEmpty(matchedMedia))
+            {
+                ed.WriteMessage($"\n  - [Sub] 自动匹配到标准纸张: {matchedMedia}");
+                psv.SetCanonicalMediaName(settings, matchedMedia);
+            }
+            else if (!string.IsNullOrEmpty(fallbackMedia))
+            {
+                try
+                {
+                    ed.WriteMessage($"\n  - [Sub] 未匹配到标准纸张，正在尝试应用预设纸张: {fallbackMedia}");
+                    psv.SetCanonicalMediaName(settings, fallbackMedia);
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage($"\n  - [警告] 预设纸张无效: {ex.Message}");
+                }
+            }
         }
 
         private static bool WaitForFileFinalized(string filePath, int timeoutMs)
@@ -680,7 +700,7 @@ namespace CadAtlasManager
             }
             return false;
         }
-        // [CadService.cs]
+
         /// <summary>
         /// 增强版批量打印：返回带状态的结果对象 (用于 UI 反馈)
         /// </summary>
@@ -771,7 +791,7 @@ namespace CadAtlasManager
             }
             return result;
         }
-        // [CadService.cs]
+
         /// <summary>
         /// 启动 CAD 的外部参照附着对话框（针对 DWG）
         /// </summary>
@@ -795,7 +815,7 @@ namespace CadAtlasManager
             // 使用 IMAGEATTACH 命令，这是专门用于图片的附着窗口
             doc.SendStringToExecute("_.IMAGEATTACH ", true, false, false);
         }
-        // [CadService.cs]
+
         /// <summary>
         /// 启动 CAD 的 PDF 参考底图附着对话框
         /// </summary>
@@ -808,9 +828,7 @@ namespace CadAtlasManager
             doc.SendStringToExecute("_.PDFATTACH ", true, false, false);
         }
 
-        // [CadService.cs]
-
-        // [CadService.cs]
+        // [CadService.cs]       
         public static int ManualPickAndPlot(Document doc, string outputDir, BatchPlotConfig config)
         {
             var ed = doc.Editor;
