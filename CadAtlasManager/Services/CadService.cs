@@ -233,6 +233,7 @@ namespace CadAtlasManager
                         if (rawBlocks.Count == 0) return generatedFiles;
 
                         var titleBlocks = SortTitleBlocks(rawBlocks, config.OrderType);
+                        doc.Editor.WriteMessage($"\n[诊断] 识别到符合条件的图框总数: {titleBlocks.Count}");
 
                         for (int i = 0; i < titleBlocks.Count; i++)
                         {
@@ -247,7 +248,7 @@ namespace CadAtlasManager
 
                             if (PlotFactory.ProcessPlotState == ProcessPlotState.NotPlotting)
                             {
-                                if (PrintExtent(doc, targetLayout, tb, config, fullPdfPath))
+                                if (PrintExtent(doc, targetLayout, tb, config, fullPdfPath, i + 1, titleBlocks.Count))
                                 {
                                     generatedFiles.Add(fileName + ".pdf");
                                     PlotMetaManager.SavePlotRecord(dwgPath, fullPdfPath);
@@ -293,29 +294,60 @@ namespace CadAtlasManager
             PlotInfo info = new PlotInfo();
             info.Layout = layout.ObjectId;
 
-            // 【关键修复】：绝对不能在这里使用 using。
-            // PlotInfo.OverrideSettings 只是引用了 settings 对象，必须保证在打印完成前它不被释放。
+            // 1. 继承：克隆布局现有的设置（保留用户设好的 CTB、线宽开关等）
             PlotSettings settings = new PlotSettings(layout.ModelType);
             settings.CopyFrom(layout);
 
             var psv = PlotSettingsValidator.Current;
-            psv.SetPlotConfigurationName(settings, config.PrinterName, null);
 
+            // 2. 强制清洗（核心步骤）：
+            // 立即将打印机设为 "None"。这会强制 AutoCAD 卸载掉那个可能导致 eInvalidInput 的失效 PC3 路径。
+            // 使用 try-catch 包裹以防止部分极端病态图纸在重置时也报错
+            try
+            {
+                psv.SetPlotConfigurationName(settings, "None", null);
+                psv.RefreshLists(settings);
+            }
+            catch { /* 静默处理重置失败 */ }
+
+            // 3. 应用新配置：设置插件界面选中的真实打印机
+            try
+            {
+                psv.SetPlotConfigurationName(settings, config.PrinterName, null);
+            }
+            catch (System.Exception ex)
+            {
+                // 如果这里报错，说明插件选中的打印机在当前环境下不可用
+                throw new System.Exception($"无法应用打印机 [{config.PrinterName}]: {ex.Message}");
+            }
+
+            // 4. 后续参数设置（保持原有逻辑）
             double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
             double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
 
+            // 自动匹配纸张
             string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
             if (!string.IsNullOrEmpty(matchedMedia))
                 psv.SetCanonicalMediaName(settings, matchedMedia);
             else if (!string.IsNullOrEmpty(config.MediaName))
-                psv.SetCanonicalMediaName(settings, config.MediaName);
+            {
+                try { psv.SetCanonicalMediaName(settings, config.MediaName); } catch { }
+            }
 
+            // 设置打印样式表 (CTB)
             if (!string.IsNullOrEmpty(config.StyleSheet))
                 try { psv.SetCurrentStyleSheet(settings, config.StyleSheet); } catch { }
 
+            // 设置打印窗口区域
             psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
-            psv.SetPlotWindowArea(settings, new Extents2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y));
+            // 【建议】：强制 Z 轴归零，防止大坐标 Z 轴干扰计算
+            Extents2d window = new Extents2d(
+                new Point2d(tb.Extents.MinPoint.X, tb.Extents.MinPoint.Y),
+                new Point2d(tb.Extents.MaxPoint.X, tb.Extents.MaxPoint.Y)
+            );
+            psv.SetPlotWindowArea(settings, window);
 
+            // 旋转逻辑
             psv.SetPlotRotation(settings, PlotRotation.Degrees000);
             if (config.AutoRotate)
             {
@@ -325,6 +357,7 @@ namespace CadAtlasManager
                     psv.SetPlotRotation(settings, PlotRotation.Degrees090);
             }
 
+            // 比例与偏移
             if (config.ScaleType == "Fit")
             {
                 psv.SetStdScaleType(settings, StdScaleType.ScaleToFit);
@@ -334,15 +367,16 @@ namespace CadAtlasManager
             {
                 CustomScale scale = ParseCustomScale(config.ScaleType);
                 psv.SetCustomPrintScale(settings, scale);
-                if (config.PlotCentered) psv.SetPlotCentered(settings, true);
+                if (config.PlotCentered)
+                    psv.SetPlotCentered(settings, true);
                 else
                 {
                     psv.SetPlotCentered(settings, false);
                     psv.SetPlotOrigin(settings, new Point2d(config.OffsetX, config.OffsetY));
                 }
             }
-            psv.RefreshLists(settings);
 
+            psv.RefreshLists(settings);
             info.OverrideSettings = settings;
             return info;
         }
@@ -453,39 +487,160 @@ namespace CadAtlasManager
             }
             return false;
         }
-        // --- 2. 修改：PrintExtent 核心打印方法 ---
-        // --- 修改后的 PrintExtent ---
-        // [CadService.cs]
-        private static bool PrintExtent(Document doc, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, string fullPdfPath)
+
+        // [CadService.cs] 用来检测打印过程，看哪一步出错
+        private static bool PrintExtent(Document doc, Layout layout, TitleBlockInfo tb, BatchPlotConfig config, string fullPdfPath, int currentIndex, int totalCount)
         {
-            if (PlotFactory.ProcessPlotState != ProcessPlotState.NotPlotting) return false;
+            var ed = doc.Editor;
+            // --- 新增：显示当前进度和图框名称 ---
+            ed.WriteMessage($"\n[诊断] === 正在处理图框 ({currentIndex}/{totalCount}): {tb.BlockName} ===");
+
+            // --- 新增：输出详细坐标信息 ---
+            ed.WriteMessage($"\n[诊断] 图框物理坐标 (Layout): ");
+            ed.WriteMessage($"\n       左下角 (Min): X={tb.Extents.MinPoint.X:F2}, Y={tb.Extents.MinPoint.Y:F2}");
+            ed.WriteMessage($"\n       右上角 (Max): X={tb.Extents.MaxPoint.X:F2}, Y={tb.Extents.MaxPoint.Y:F2}");
+            ed.WriteMessage($"\n       计算尺寸: 宽={Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X):F2}, 高={Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y):F2}");
 
             try
             {
+                // 步骤 1: 构建 PlotInfo
+                ed.WriteMessage("\n[诊断] 步骤 1: 正在构建 PlotInfo...");
+                PlotInfo plotInfo = BuildPlotInfoWithLog(ed, layout, tb, config);
+                ed.WriteMessage("\n[诊断] 步骤 1: PlotInfo 构建成功");
+
+                // 步骤 2: 验证 PlotInfo
+                ed.WriteMessage("\n[诊断] 步骤 2: 正在执行 PlotInfoValidator.Validate...");
+                PlotInfoValidator validator = new PlotInfoValidator { MediaMatchingPolicy = MatchingPolicy.MatchEnabled };
+                validator.Validate(plotInfo);
+                ed.WriteMessage("\n[诊断] 步骤 2: 验证通过");
+
+                // 步骤 3: 启动引擎
+                ed.WriteMessage("\n[诊断] 步骤 3: 正在创建 PlotEngine...");
                 using (PlotEngine engine = PlotFactory.CreatePublishEngine())
                 {
-                    PlotInfo plotInfo = BuildPlotInfo(null, layout, tb, config, doc.Database);
-                    PlotInfoValidator validator = new PlotInfoValidator { MediaMatchingPolicy = MatchingPolicy.MatchEnabled };
-                    validator.Validate(plotInfo);
-
+                    ed.WriteMessage("\n[诊断] 步骤 4: 正在执行 BeginPlot...");
                     engine.BeginPlot(null, null);
+
+                    ed.WriteMessage($"\n[诊断] 步骤 5: 正在执行 BeginDocument -> {Path.GetFileName(fullPdfPath)}");
                     engine.BeginDocument(plotInfo, doc.Name, null, 1, true, fullPdfPath);
+
+                    ed.WriteMessage("\n[诊断] 步骤 6: 正在执行 BeginPage...");
                     engine.BeginPage(new PlotPageInfo(), plotInfo, true, null);
+
+                    ed.WriteMessage("\n[诊断] 步骤 7: 正在生成图形...");
                     engine.BeginGenerateGraphics(null);
                     engine.EndGenerateGraphics(null);
+
+                    ed.WriteMessage("\n[诊断] 步骤 8: 正在结束页面与文档...");
                     engine.EndPage(null);
                     engine.EndDocument(null);
                     engine.EndPlot(null);
-
-                    // 【物理校验】：循环 5 秒等待文件出现且不再被驱动锁定
-                    return WaitForFileFinalized(fullPdfPath, 5000);
                 }
+
+                ed.WriteMessage("\n[诊断] 步骤 9: 物理文件校验中...");
+                return WaitForFileFinalized(fullPdfPath, 5000);
             }
             catch (System.Exception ex)
             {
-                doc.Editor.WriteMessage($"\n[打印错误] {ex.Message}");
+                ed.WriteMessage($"\n[！！！崩溃捕捉] 报错类型: {ex.GetType().Name}");
+                ed.WriteMessage($"\n[！！！崩溃捕捉] 错误详情: {ex.Message}");
+                ed.WriteMessage($"\n[！！！崩溃捕捉] 堆栈轨迹: \n{ex.StackTrace}");
                 return false;
             }
+        }
+
+        private static PlotInfo BuildPlotInfoWithLog(Editor ed, Layout layout, TitleBlockInfo tb, BatchPlotConfig config)
+        {
+            PlotInfo info = new PlotInfo();
+            info.Layout = layout.ObjectId;
+
+            // 1. 创建全新的设置对象
+            PlotSettings settings = new PlotSettings(layout.ModelType);
+            var psv = PlotSettingsValidator.Current;
+
+            // 2. 建立健康的驱动环境
+            ed.WriteMessage($"\n  - [Sub] 正在建立清洁环境，设置驱动: {config.PrinterName}");
+            psv.SetPlotConfigurationName(settings, config.PrinterName, null);
+            psv.RefreshLists(settings);
+
+            // 3. 初始化参数
+            psv.SetPlotPaperUnits(settings, Autodesk.AutoCAD.DatabaseServices.PlotPaperUnit.Millimeters);
+            psv.SetPlotOrigin(settings, new Autodesk.AutoCAD.Geometry.Point2d(0, 0));
+            psv.SetStdScaleType(settings, Autodesk.AutoCAD.DatabaseServices.StdScaleType.StdScale1To1);
+
+            // 4. 同步样式设置
+            if (!string.IsNullOrEmpty(layout.CurrentStyleSheet))
+            {
+                try { psv.SetCurrentStyleSheet(settings, layout.CurrentStyleSheet); } catch { }
+            }
+            settings.ShowPlotStyles = true;
+            settings.PrintLineweights = true;
+            settings.DrawViewportsFirst = true;
+
+            // 5. 匹配纸张
+            double blockW = Math.Abs(tb.Extents.MaxPoint.X - tb.Extents.MinPoint.X);
+            double blockH = Math.Abs(tb.Extents.MaxPoint.Y - tb.Extents.MinPoint.Y);
+            string matchedMedia = FindMatchingMedia(settings, psv, blockW, blockH);
+            if (!string.IsNullOrEmpty(matchedMedia))
+            {
+                ed.WriteMessage($"\n  - [Sub] 匹配并应用纸张: {matchedMedia}");
+                psv.SetCanonicalMediaName(settings, matchedMedia);
+            }
+
+            // 6. 预设窗口坐标
+            Autodesk.AutoCAD.DatabaseServices.Extents2d window = new Autodesk.AutoCAD.DatabaseServices.Extents2d(
+                Math.Min(tb.Extents.MinPoint.X, tb.Extents.MaxPoint.X),
+                Math.Min(tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.Y),
+                Math.Max(tb.Extents.MinPoint.X, tb.Extents.MaxPoint.X),
+                Math.Max(tb.Extents.MinPoint.Y, tb.Extents.MaxPoint.Y)
+            );
+            psv.SetPlotWindowArea(settings, window);
+
+            // 7. 切换 PlotType 为 Window
+            psv.SetPlotType(settings, Autodesk.AutoCAD.DatabaseServices.PlotType.Window);
+
+            // ============================================================
+            // 【核心修复】：重新加入旋转控制逻辑
+            // ============================================================
+            // 先默认不旋转
+            psv.SetPlotRotation(settings, Autodesk.AutoCAD.DatabaseServices.PlotRotation.Degrees000);
+
+            if (config.AutoRotate)
+            {
+                // 重新获取应用纸张后的物理尺寸
+                double paperW = settings.PlotPaperSize.X;
+                double paperH = settings.PlotPaperSize.Y;
+
+                ed.WriteMessage($"\n  - [Sub] 旋转校验: 图框({blockW:F0}x{blockH:F0}) vs 纸张({paperW:F0}x{paperH:F0})");
+
+                // 逻辑：如果“图框是横的而纸张是纵的”或者“图框是纵的而纸张是横的”，则旋转 90 度
+                if ((blockW > blockH) != (paperW > paperH))
+                {
+                    ed.WriteMessage("\n  - [Sub] 检测到方向不匹配，正在执行旋转 90 度...");
+                    psv.SetPlotRotation(settings, Autodesk.AutoCAD.DatabaseServices.PlotRotation.Degrees090);
+                }
+                else
+                {
+                    ed.WriteMessage("\n  - [Sub] 方向已匹配，保持 0 度。");
+                }
+            }
+            // ============================================================
+
+            // 8. 设置最终比例与居中
+            if (config.ScaleType == "Fit")
+            {
+                psv.SetStdScaleType(settings, Autodesk.AutoCAD.DatabaseServices.StdScaleType.ScaleToFit);
+                psv.SetPlotCentered(settings, true);
+            }
+            else
+            {
+                psv.SetCustomPrintScale(settings, ParseCustomScale(config.ScaleType));
+                psv.SetPlotCentered(settings, config.PlotCentered);
+            }
+
+            psv.RefreshLists(settings);
+            info.OverrideSettings = settings;
+            return info;
         }
 
         private static bool WaitForFileFinalized(string filePath, int timeoutMs)
@@ -577,7 +732,7 @@ namespace CadAtlasManager
                             if (titleBlocks.Count > 1) fileName += $"_{(i + 1):D2}";
                             string fullPdfPath = Path.Combine(outputDir, fileName + ".pdf");
 
-                            if (PrintExtent(doc, layout, titleBlocks[i], config, fullPdfPath))
+                            if (PrintExtent(doc, layout, titleBlocks[i], config, fullPdfPath, i + 1, titleBlocks.Count))
                             {
                                 // 修正：此处应添加到 result 对象的列表中
                                 result.GeneratedPdfs.Add(fileName + ".pdf");
@@ -748,7 +903,7 @@ namespace CadAtlasManager
             string dwgFileName = Path.GetFileNameWithoutExtension(dwgPath);
             string pdfName = $"{dwgFileName}_{index:D2}.pdf";
             string fullPdfPath = Path.Combine(outputDir, pdfName);
-            return PrintExtent(doc, layout, tb, config, fullPdfPath);
+            return PrintExtent(doc, layout, tb, config, fullPdfPath, index, index);
         }
         // [CadService.cs] 
         // 建议添加在文件末尾或合适的位置
