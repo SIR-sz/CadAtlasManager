@@ -565,6 +565,23 @@ namespace CadAtlasManager
         private void LoadPlotFilesList(FileSystemItem folder)
         {
             if (folder == null) return;
+            // ================== 核心修复开始 ==================
+            // 1. 在树的数据源中找到对应的真实节点对象
+            // (虽然入参 folder 可能就是那个节点，但为了保险起见，尤其是从外部调用时，重新查找最稳妥)
+            FileSystemItem treeNode = FindItemInTree(PlotFolderItems, folder.FullPath);
+
+            // 2. 清除树中所有已高亮的项 (解决“旧的高亮不消失”的问题)
+            ClearAllSelection(PlotFolderItems);
+
+            // 3. 激活当前节点 (解决“点击新文件夹不高亮”的问题)
+            if (treeNode != null)
+            {
+                treeNode.IsItemSelected = true;
+                // 顺便确保父级展开，防止从代码跳转过来时没展开
+                // (注意：这里不要强制 treeNode.IsExpanded = true，否则点击父文件夹想折叠时会自动弹开)
+            }
+            // ================== 核心修复结束 ==================
+
             _currentPlotFolderPath = folder.FullPath; // 关键：记录当前图纸查看路径
 
             PlotFileListItems.Clear(); //
