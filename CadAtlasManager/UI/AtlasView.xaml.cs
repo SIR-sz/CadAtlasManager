@@ -216,18 +216,18 @@ namespace CadAtlasManager
                     Name = stageName,
                     FullPath = stageDir,
                     Type = ExplorerItemType.Folder,
-                    TypeIcon = "🏗️",
+                    TypeIcon = "\uD83C\uDFD7\uFE0F",
                     IsExpanded = true
                 };
 
                 var itemSplit = CreateItem(plotPath, ExplorerItemType.Folder); //
-                itemSplit.Name = "📄 分项 PDF"; //
+                itemSplit.Name = "\uD83D\uDCC4 分项 PDF"; //
                 LoadPlotFoldersOnly(itemSplit, "Combined"); //
 
                 string combinedPath = Path.Combine(plotPath, "Combined"); //
                 if (!Directory.Exists(combinedPath)) Directory.CreateDirectory(combinedPath);
                 var itemCombined = CreateItem(combinedPath, ExplorerItemType.Folder); //
-                itemCombined.Name = "📑 成果 PDF"; //
+                itemCombined.Name = "\uD83D\uDCD1 成果 PDF"; //
 
                 stageNode.Children.Add(itemSplit);
                 stageNode.Children.Add(itemCombined);
@@ -560,7 +560,7 @@ namespace CadAtlasManager
                     // 跳过隐藏文件夹
                     if (dirInfo.Attributes.HasFlag(FileAttributes.Hidden)) continue;
 
-                    // ✅ 新增过滤：如果文件夹名等于我们要排除的名字（比如 Combined），则跳过
+                    // \u2705 新增过滤：如果文件夹名等于我们要排除的名字（比如 Combined），则跳过
                     if (!string.IsNullOrEmpty(excludeName) &&
                         dirInfo.Name.Equals(excludeName, StringComparison.OrdinalIgnoreCase))
                         continue;
@@ -1070,7 +1070,7 @@ namespace CadAtlasManager
 
             var root = CreateItem(_activeProject.Path, ExplorerItemType.Folder, true);
             root.Name = _activeProject.Name;
-            root.TypeIcon = "🏗️";
+            root.TypeIcon = "\uD83C\uDFD7\uFE0F";
 
             LoadProjectSubItems(root);
             ProjectTreeItems.Add(root);
@@ -1385,7 +1385,7 @@ namespace CadAtlasManager
                     FilePath = item.FullPath,
                     IsOutdated = !isLatest,
                     IsSelected = !isLatest,
-                    VersionStatus = !isLatest ? "⚠️ 需更新" : "✅ 最新"
+                    VersionStatus = !isLatest ? "\u26A0\uFE0F 需更新" : "\u2705 最新"
                 });
             }
             return list;
@@ -1401,21 +1401,21 @@ namespace CadAtlasManager
             switch (status)
             {
                 case PdfStatus.Latest:
-                    // 结果示例：✅ 最新 或 ✅ 外部绑定最新
-                    item.VersionStatus = $"✅ {prefix}最新";
+                    // 结果示例：\u2705 最新 或 \u2705 外部绑定最新
+                    item.VersionStatus = $"\u2705 {prefix}最新";
                     item.StatusColor = Brushes.Green;
                     break;
                 case PdfStatus.Expired:
-                    // 结果示例：⚠️ 需更新 或 ⚠️ 外部绑定需更新
-                    item.VersionStatus = $"⚠️ {prefix}需更新";
+                    // 结果示例：\u26A0\uFE0F 需更新 或 \u26A0\uFE0F 外部绑定需更新
+                    item.VersionStatus = $"\u26A0\uFE0F {prefix}需更新";
                     item.StatusColor = Brushes.Red;
                     break;
                 case PdfStatus.NeedRemerge:
-                    item.VersionStatus = "🔄 需重并";
+                    item.VersionStatus = "\uD83D\uDD04 需重并";
                     item.StatusColor = Brushes.Orange;
                     break;
                 case PdfStatus.MissingSource:
-                    item.VersionStatus = "❓ 源缺失";
+                    item.VersionStatus = "\u2753 源缺失";
                     item.StatusColor = Brushes.Gray;
                     break;
                 default:
@@ -1522,7 +1522,7 @@ namespace CadAtlasManager
                 Name = Path.GetFileName(path),
                 FullPath = path,
                 Type = type,
-                TypeIcon = type == ExplorerItemType.Folder ? "📁" : GetIconForExtension(ext),
+                TypeIcon = type == ExplorerItemType.Folder ? "\uD83D\uDCC1" : GetIconForExtension(ext),
                 IsRoot = isRoot,
                 IsExpanded = isRoot,
                 FontWeight = isRoot ? FontWeights.Bold : FontWeights.Normal,
@@ -1947,7 +1947,7 @@ namespace CadAtlasManager
                 SetBindMenuVisibility(contextMenu, Visibility.Visible);
             }
 
-            MessageBox.Show($"已进入绑定模式。\n\n当前待绑定文件: {item.Name}\n请在【项目工作台】找到对应的 DWG 源码文件，右键点击并选择【✅ 确认绑定 PDF】。", "绑定引导");
+            MessageBox.Show($"已进入绑定模式。\n\n当前待绑定文件: {item.Name}\n请在【项目工作台】找到对应的 DWG 源码文件，右键点击并选择【\u2705 确认绑定 PDF】。", "绑定引导");
         }
 
         // --- 2. 辅助方法：统一控制绑定菜单项及其分隔线的显示/隐藏 ---
@@ -2629,13 +2629,13 @@ namespace CadAtlasManager
         }
         private string GetIconForExtension(string x)
         {
-            if (x.Contains("dwg")) return "📐";
-            if (x == ".pat") return "🦓"; // 斑马纹图标，很形象地代表填充图案
-            if (".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return "📄";
-            if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return "🖼️";
-            if (x.Contains("pdf")) return "📕";
-            if (".zip.rar.7z".Contains(x)) return "📦";
-            return "📃";
+            if (x.Contains("dwg")) return "\uD83D\uDCD0";
+            if (x == ".pat") return "\uD83E\uDD93"; // 斑马纹图标，很形象地代表填充图案
+            if (".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return "\uD83D\uDCC4";
+            if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return "\uD83D\uDDBC\uFE0F";
+            if (x.Contains("pdf")) return "\uD83D\uDCD5";
+            if (".zip.rar.7z".Contains(x)) return "\uD83D\uDCE6";
+            return "\uD83D\uDCC3";
         }
         private void BtnSaveLayout_Click(object sender, RoutedEventArgs e)
         {

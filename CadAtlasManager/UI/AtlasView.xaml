@@ -15,7 +15,7 @@
             <MenuItem Header="打开图纸" Click="MenuItem_Open_Click" FontWeight="Bold"/>
             <MenuItem Header="打开源 DWG 文件" Click="MenuItem_OpenSourceDwg_Click"/>
             <Separator/>
-            <MenuItem Header="🔗 绑定至源图纸..." Click="MenuItem_BindExternalPdf_Click" ToolTip="手动建立该 PDF 与源 DWG 的关联"/>
+            <MenuItem Header="&#x1F517; 绑定至源图纸..." Click="MenuItem_BindExternalPdf_Click" ToolTip="手动建立该 PDF 与源 DWG 的关联"/>
             <Separator/>
             <MenuItem Header="删除图纸" Click="MenuItem_Delete_Click" Foreground="Red"/>
         </ContextMenu>
@@ -62,7 +62,7 @@
             <StackPanel Orientation="Horizontal">
                 <Grid Margin="0,0,5,0">
                     <TextBlock Text="{Binding TypeIcon}" FontSize="14" VerticalAlignment="Center"/>
-                    <TextBlock Text="ℹ️" FontSize="8" FontWeight="Bold" Foreground="#007ACC"
+                    <TextBlock Text="&#x2139;&#xFE0F;" FontSize="8" FontWeight="Bold" Foreground="#007ACC"
                                VerticalAlignment="Bottom" HorizontalAlignment="Right"
                                Visibility="{Binding HasRemark, Converter={StaticResource BoolToVis}}"
                                Margin="0,0,-2,-2" Background="White"/>
@@ -113,7 +113,7 @@
                                         <Setter Property="Template">
                                             <Setter.Value>
                                                 <ControlTemplate TargetType="ToggleButton">
-                                                    <TextBlock Text="▶" FontSize="9" Foreground="#888" 
+                                                    <TextBlock Text="&#x25B6;" FontSize="9" Foreground="#888" 
                                                                VerticalAlignment="Center" HorizontalAlignment="Center"
                                                                RenderTransformOrigin="0.5,0.5">
                                                         <TextBlock.RenderTransform>
@@ -173,7 +173,7 @@
         <TabControl x:Name="MainTabControl" Grid.Row="0" Background="White" BorderThickness="0">
             <TabItem Background="#f0f0f0">
                 <TabItem.Header>
-                    <TextBlock Text="📚 资料图集库" FontSize="14" VerticalAlignment="Center" Margin="2,0"/>
+                    <TextBlock Text="&#x1F4DA; 资料图集库" FontSize="14" VerticalAlignment="Center" Margin="2,0"/>
                 </TabItem.Header>
                 <Grid>
                     <Grid.RowDefinitions>
@@ -203,7 +203,7 @@
                     <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="5,0">
                         <Button Name="BtnLoadFolder" Content="+ 导入图集" Padding="8,4" Click="BtnLoadFolder_Click" Background="#ddd"/>
                         <Button Content="刷新列表" Margin="5,0,0,0" Padding="8,4" Click="BtnRefresh_Click"/>
-                        <Button Content="💾 保存布局" Margin="5,0,0,0" Padding="8,4" Click="BtnSaveLayout_Click" ToolTip="保存当前各选项卡的栏位宽度设置"/>
+                        <Button Content="&#x1F4BE; 保存布局" Margin="5,0,0,0" Padding="8,4" Click="BtnSaveLayout_Click" ToolTip="保存当前各选项卡的栏位宽度设置"/>
                     </StackPanel>
                     <Border Grid.Row="2" BorderBrush="#ddd" BorderThickness="0,1,0,1" Padding="5" Margin="0,5" Background="#fafafa">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
@@ -224,7 +224,7 @@
 
             <TabItem Background="#f0f0f0">
                 <TabItem.Header>
-                    <TextBlock Text="🏗️ 项目工作台" FontSize="14" VerticalAlignment="Center" Margin="2,0"/>
+                    <TextBlock Text="&#x1F3D7;&#xFE0F; 项目工作台" FontSize="14" VerticalAlignment="Center" Margin="2,0"/>
                 </TabItem.Header>
                 <Grid>
                     <Grid.RowDefinitions>
@@ -247,9 +247,9 @@
                         </Grid>
 
                         <StackPanel Orientation="Horizontal" Margin="0,5">
-                            <Button Content="📂 浏览文件" Click="BtnOpenProjectFolder_Click" Margin="0,0,5,0"/>
-                            <Button Content="❌ 移除项目" Click="BtnRemoveProject_Click" Margin="0,0,5,0"/>
-                            <Button Content="🔄 刷新" Click="BtnRefreshProject_Click" Margin="0,0,25,0" ToolTip="刷新项目文件"/>
+                            <Button Content="&#x1F4C2; 浏览文件" Click="BtnOpenProjectFolder_Click" Margin="0,0,5,0"/>
+                            <Button Content="&#x274C; 移除项目" Click="BtnRemoveProject_Click" Margin="0,0,5,0"/>
+                            <Button Content="&#x1F504; 刷新" Click="BtnRefreshProject_Click" Margin="0,0,25,0" ToolTip="刷新项目文件"/>
                             <TextBlock Text="筛选:" VerticalAlignment="Center" Margin="0,0,5,0" Foreground="Gray"/>
                             <ComboBox Name="CbProjectFileType" Width="90" SelectionChanged="CbProjectFileType_SelectionChanged" SelectedIndex="0">
                                 <ComboBoxItem Content="所有格式"/>
@@ -259,7 +259,7 @@
                                 <ComboBoxItem Content="PDF"/>
                                 <ComboBoxItem Content="压缩包"/>
                             </ComboBox>
-                            <Button Content="🖨️ 批量打印 (PDF)" Click="MenuItem_BatchPlot_Click" FontWeight="Bold" Margin="10,0,0,0" Padding="10,0" Background="#E1F5FE" BorderBrush="#03A9F4"/>
+                            <Button Content="&#x1F5A8;&#xFE0F; 批量打印 (PDF)" Click="MenuItem_BatchPlot_Click" FontWeight="Bold" Margin="10,0,0,0" Padding="10,0" Background="#E1F5FE" BorderBrush="#03A9F4"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -295,7 +295,7 @@
                         <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Center" Background="Transparent"/>
 
                         <DockPanel Grid.Column="2">
-                            <TextBlock Text="📄 文件明细" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
+                            <TextBlock Text="&#x1F4C4; 文件明细" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
                             <DataGrid Name="ProjectFileList" 
           AutoGenerateColumns="False" CanUserAddRows="False" 
           SelectionMode="Extended" MouseDoubleClick="ProjectFileList_MouseDoubleClick"
@@ -326,7 +326,7 @@
                                     <DataGridTemplateColumn Width="40" Header="备注">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
-                                                <TextBlock Text="ℹ️" Foreground="#007ACC" FontWeight="Bold" HorizontalAlignment="Center"
+                                                <TextBlock Text="&#x2139;&#xFE0F;" Foreground="#007ACC" FontWeight="Bold" HorizontalAlignment="Center"
                                                            Visibility="{Binding HasRemark, Converter={StaticResource BoolToVis}}" 
                                                            ToolTip="该文件有备注内容"/>
                                             </DataTemplate>
@@ -352,7 +352,7 @@
 
             <TabItem Background="#f0f0f0">
                 <TabItem.Header>
-                    <TextBlock Text="📑 图纸工作台" FontSize="14" VerticalAlignment="Center" Margin="2,0"/>
+                    <TextBlock Text="&#x1F4D1; 图纸工作台" FontSize="14" VerticalAlignment="Center" Margin="2,0"/>
                 </TabItem.Header>
                 <Grid>
                     <Grid.RowDefinitions>
@@ -368,14 +368,14 @@
                             <TextBlock Text="{Binding SelectedItem.Name, ElementName=CbProjects}" FontWeight="Bold" Foreground="Blue" VerticalAlignment="Center" Margin="5,0,0,0"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,5">
-                            <Button Content="📂 打开输出目录" Click="BtnOpenPlotFolder_Click" Margin="0,0,5,0"/>
-                            <Button Content="🔍 校验版本" Click="BtnCheckVersion_Click" Margin="0,0,5,0" ToolTip="检查图纸是否需要重新打印"/>
-                            <Button Content="🔄 刷新" Click="BtnRefreshPlot_Click" Margin="0,0,20,0"/>
-                            <Button Content="🗑️ 删除" Click="BtnDeletePlotFiles_Click" Margin="0,0,5,0" Foreground="Red"/>
-                            <Button Content="📄+📄 合并PDF" Click="BtnMergePdf_Click" ToolTip="合并选中的PDF文件" Margin="0,0,5,0"/>
-                            <Button Content="📂 打开源文件" Click="BtnOpenSourceDwg_Click" ToolTip="打开当前PDF对应的DWG图纸" Margin="0,0,5,0"/>
+                            <Button Content="&#x1F4C2; 打开输出目录" Click="BtnOpenPlotFolder_Click" Margin="0,0,5,0"/>
+                            <Button Content="&#x1F50D; 校验版本" Click="BtnCheckVersion_Click" Margin="0,0,5,0" ToolTip="检查图纸是否需要重新打印"/>
+                            <Button Content="&#x1F504; 刷新" Click="BtnRefreshPlot_Click" Margin="0,0,20,0"/>
+                            <Button Content="&#x1F5D1;&#xFE0F; 删除" Click="BtnDeletePlotFiles_Click" Margin="0,0,5,0" Foreground="Red"/>
+                            <Button Content="&#x1F4C4;+&#x1F4C4; 合并PDF" Click="BtnMergePdf_Click" ToolTip="合并选中的PDF文件" Margin="0,0,5,0"/>
+                            <Button Content="&#x1F4C2; 打开源文件" Click="BtnOpenSourceDwg_Click" ToolTip="打开当前PDF对应的DWG图纸" Margin="0,0,5,0"/>
 
-                            <Button Content="🖨️ 批量重印" Click="BtnBatchPlotFromPlot_Click" 
+                            <Button Content="&#x1F5A8;&#xFE0F; 批量重印" Click="BtnBatchPlotFromPlot_Click" 
             FontWeight="Bold" Padding="10,0" Background="#E1F5FE" BorderBrush="#03A9F4"
             ToolTip="重新打印选中PDF对应的源DWG图纸"/>
                         </StackPanel>
@@ -408,7 +408,7 @@
                         <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Center" Background="Transparent"/>
 
                         <DockPanel Grid.Column="2">
-                            <TextBlock Text="📄 文件明细" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
+                            <TextBlock Text="&#x1F4C4; 文件明细" DockPanel.Dock="Top" Foreground="Gray" Margin="0,0,0,5"/>
                             <DataGrid Name="PlotFileList" 
           AutoGenerateColumns="False" CanUserAddRows="False" 
           GridLinesVisibility="Horizontal" Background="White" BorderBrush="#eee"
@@ -485,7 +485,7 @@
                 </Grid.RowDefinitions>
                 <Grid Background="#F5F5F5" Grid.Row="0">
                     <StackPanel Orientation="Horizontal" Margin="10,5">
-                        <TextBlock Text="📝 信息备注" FontWeight="Bold" Foreground="#333"/>
+                        <TextBlock Text="&#x1F4DD; 信息备注" FontWeight="Bold" Foreground="#333"/>
                         <TextBlock Text=" (实时保存)" FontSize="10" Foreground="Gray" VerticalAlignment="Center" Margin="5,0,0,0"/>
                     </StackPanel>
                     <Button Content="✕" HorizontalAlignment="Right" Width="25" 

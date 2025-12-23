@@ -69,7 +69,7 @@
         <Border Grid.Column="0" Background="White" BorderBrush="#DDD" BorderThickness="1" CornerRadius="4" Padding="15">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel>
-                    <TextBlock Text="🖨️ 打印机 / 绘图仪" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <TextBlock Text="&#x1F5A8;&#xFE0F; 打印机 / 绘图仪" FontWeight="Bold" Margin="0,0,0,8"/>
                     <ComboBox x:Name="CbPrinters" SelectionChanged="CbPrinters_SelectionChanged" Margin="0,0,0,12"/>
 
                     <GroupBox Header="打印顺序" Margin="0,5">
@@ -124,16 +124,16 @@
                     </GroupBox>
 
                     <DockPanel Margin="0,10,0,8">
-                        <TextBlock Text="📄 默认纸张" FontWeight="Bold" VerticalAlignment="Center"/>
+                        <TextBlock Text="&#x1F4C4; 默认纸张" FontWeight="Bold" VerticalAlignment="Center"/>
                         <CheckBox x:Name="ChkLockPaper" Content="锁定" Margin="10,0,0,0" VerticalAlignment="Center" 
                                   ToolTip="勾选后将强制使用下方选定的纸张，不再根据图框尺寸自动匹配纸张"/>
                     </DockPanel>
                     <ComboBox x:Name="CbPaper" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="🎨 打印样式表" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <TextBlock Text="&#x1F3A8; 打印样式表" FontWeight="Bold" Margin="0,0,0,8"/>
                     <ComboBox x:Name="CbStyles" Margin="0,0,0,12"/>
 
-                    <TextBlock Text="📦 图框块名" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <TextBlock Text="&#x1F4E6; 图框块名" FontWeight="Bold" Margin="0,0,0,4"/>
                     <TextBox x:Name="TbBlockNames" Margin="0,0,0,12" Height="26"/>
 
                     <CheckBox x:Name="ChkAutoRotate" Content="自动旋转 (适应纸张)" IsChecked="True" Margin="0,5,0,20"/>
@@ -155,7 +155,7 @@
             </Grid.RowDefinitions>
 
             <DockPanel Grid.Row="0" Margin="0,0,0,10">
-                <TextBlock Text="📚 打印执行任务列表" FontWeight="Bold" FontSize="14" DockPanel.Dock="Left"/>
+                <TextBlock Text="&#x1F4DA; 打印执行任务列表" FontWeight="Bold" FontSize="14" DockPanel.Dock="Left"/>
                 <TextBlock x:Name="TxtCount" Text="共 0 个文件" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="Gray"/>
             </DockPanel>
 
