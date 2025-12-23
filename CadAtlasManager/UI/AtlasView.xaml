@@ -196,6 +196,7 @@
                             <ComboBoxItem Content="DWG图纸"/>
                             <ComboBoxItem Content="办公文档"/>
                             <ComboBoxItem Content="图片"/>
+                            <ComboBoxItem Content="视频"/>
                             <ComboBoxItem Content="PDF"/>
                             <ComboBoxItem Content="压缩包"/>
                         </ComboBox>
@@ -256,6 +257,7 @@
                                 <ComboBoxItem Content="DWG图纸"/>
                                 <ComboBoxItem Content="办公文档"/>
                                 <ComboBoxItem Content="图片"/>
+                                <ComboBoxItem Content="视频"/>
                                 <ComboBoxItem Content="PDF"/>
                                 <ComboBoxItem Content="压缩包"/>
                             </ComboBox>

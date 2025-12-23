@@ -34,6 +34,19 @@ namespace CadAtlasManager
         public ObservableCollection<FileSystemItem> ProjectFileListItems { get; set; }
         // 新增：PlotFileListItems 用于右侧列表
         public ObservableCollection<FileSystemItem> PlotFileListItems { get; set; }
+        // 【新增辅助方法】绕过加密，通过 Unicode 编码动态生成图标
+        private string Icon(int code)
+        {
+            return char.ConvertFromUtf32(code);
+        }
+
+        // 针对需要变体选择符（如彩色）的图标
+        private string Icon(int code, bool color)
+        {
+            // 0xFE0F 是强制显示彩色的后缀
+            return color ? char.ConvertFromUtf32(code) + char.ConvertFromUtf32(0xFE0F) : char.ConvertFromUtf32(code);
+        }
+
         private List<string> _loadedAtlasFolders = new List<string>();
         private ProjectItem _activeProject = null;
         private readonly string _versionInfo =
@@ -78,10 +91,13 @@ namespace CadAtlasManager
 
         private FileSystemItem _pendingBindingPdf = null; // 记录当前等待绑定的 PDF 对象
 
+        // [CadAtlasManager/UI/AtlasView.xaml.cs] 约 45 行
         private readonly List<string> _allowedExtensions = new List<string>
         {
             ".dwg", ".dxf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".wps", ".pdf", ".txt",
-            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".mp4", ".avi", ".mov", //
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", 
+            // ✅ 修改：确保包含更多视频格式
+            ".mp4", ".avi", ".mov", ".wmv", ".mkv",
             ".zip", ".rar", ".7z", ".pat"
         };
 
@@ -216,18 +232,18 @@ namespace CadAtlasManager
                     Name = stageName,
                     FullPath = stageDir,
                     Type = ExplorerItemType.Folder,
-                    TypeIcon = "\uD83C\uDFD7\uFE0F",
+                    TypeIcon = Icon(0x1F3D7, true), // 🏗️
                     IsExpanded = true
                 };
 
                 var itemSplit = CreateItem(plotPath, ExplorerItemType.Folder); //
-                itemSplit.Name = "\uD83D\uDCC4 分项 PDF"; //
+                itemSplit.Name = $"{Icon(0x1F4C4)} 分项 PDF";
                 LoadPlotFoldersOnly(itemSplit, "Combined"); //
 
                 string combinedPath = Path.Combine(plotPath, "Combined"); //
                 if (!Directory.Exists(combinedPath)) Directory.CreateDirectory(combinedPath);
                 var itemCombined = CreateItem(combinedPath, ExplorerItemType.Folder); //
-                itemCombined.Name = "\uD83D\uDCD1 成果 PDF"; //
+                itemCombined.Name = $"{Icon(0x1F4D1)} 成果 PDF";
 
                 stageNode.Children.Add(itemSplit);
                 stageNode.Children.Add(itemCombined);
@@ -1070,7 +1086,7 @@ namespace CadAtlasManager
 
             var root = CreateItem(_activeProject.Path, ExplorerItemType.Folder, true);
             root.Name = _activeProject.Name;
-            root.TypeIcon = "\uD83C\uDFD7\uFE0F";
+            root.TypeIcon = Icon(0x1F3D7, true);
 
             LoadProjectSubItems(root);
             ProjectTreeItems.Add(root);
@@ -1522,7 +1538,8 @@ namespace CadAtlasManager
                 Name = Path.GetFileName(path),
                 FullPath = path,
                 Type = type,
-                TypeIcon = type == ExplorerItemType.Folder ? "\uD83D\uDCC1" : GetIconForExtension(ext),
+                // ✅ 修改为 (使用 Icon 方法)
+                TypeIcon = type == ExplorerItemType.Folder ? Icon(0x1F4C1) : GetIconForExtension(ext),
                 IsRoot = isRoot,
                 IsExpanded = isRoot,
                 FontWeight = isRoot ? FontWeights.Bold : FontWeights.Normal,
@@ -2617,25 +2634,46 @@ namespace CadAtlasManager
             }
         }
         private void OpenFileSmart(string s, string m, string d = null) { string f = s; if (m == "Copy" && !string.IsNullOrEmpty(d)) { try { File.Copy(s, d, true); f = d; m = "Edit"; } catch { return; } } string x = Path.GetExtension(f).ToLower(); if (x == ".dwg" || x == ".dxf") CadService.OpenDwg(f, m); else Process.Start(new ProcessStartInfo(f) { UseShellExecute = true }); }
+        // [CadAtlasManager/UI/AtlasView.xaml.cs]
         private bool CheckFileFilter(string x, string f)
         {
             if (string.IsNullOrEmpty(f) || f == "所有格式") return true;
             if (f == "DWG图纸" && x.Contains("dwg")) return true;
             if (f == "办公文档" && ".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return true;
             if (f == "图片" && ".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return true;
+
+            // ✅ 新增：视频筛选逻辑
+            if (f == "视频" && ".mp4.avi.mov.wmv.mkv".Contains(x)) return true;
+
             if (f == "PDF" && x == ".pdf") return true;
             if (f == "压缩包" && ".zip.rar.7z".Contains(x)) return true;
             return false;
         }
         private string GetIconForExtension(string x)
         {
-            if (x.Contains("dwg")) return "\uD83D\uDCD0";
-            if (x == ".pat") return "\uD83E\uDD93"; // 斑马纹图标，很形象地代表填充图案
-            if (".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return "\uD83D\uDCC4";
-            if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return "\uD83D\uDDBC\uFE0F";
-            if (x.Contains("pdf")) return "\uD83D\uDCD5";
-            if (".zip.rar.7z".Contains(x)) return "\uD83D\uDCE6";
-            return "\uD83D\uDCC3";
+            // DWG 图纸 (三角尺 📐 0x1F4D0)
+            if (x.Contains("dwg")) return Icon(0x1F4D0);
+
+            // PAT 填充 (斑马 🦓 0x1F993)
+            if (x == ".pat") return Icon(0x1F993);
+
+            // 办公文档 (页面 📄 0x1F4C4)
+            if (".doc.docx.xls.xlsx.ppt.pptx.wps.txt".Contains(x)) return Icon(0x1F4C4);
+
+            // 图片 (带框画 🖼️ 0x1F5BC + 彩色后缀)
+            if (".jpg.jpeg.png.bmp.gif.tif.tiff".Contains(x)) return Icon(0x1F5BC, true);
+
+            // [新增] 视频文件 (电影摄像机 🎥 0x1F3A5 + 彩色后缀)
+            if (".mp4.avi.mov.wmv.mkv".Contains(x)) return Icon(0x1F3A5, true);
+
+            // PDF (红书 📕 0x1F4D5)
+            if (x.Contains("pdf")) return Icon(0x1F4D5);
+
+            // 压缩包 (包裹 📦 0x1F4E6)
+            if (".zip.rar.7z".Contains(x)) return Icon(0x1F4E6);
+
+            // 默认文档 (卷曲页 📃 0x1F4C3)
+            return Icon(0x1F4C3);
         }
         private void BtnSaveLayout_Click(object sender, RoutedEventArgs e)
         {
@@ -2680,4 +2718,5 @@ namespace CadAtlasManager
             throw new NotImplementedException();
         }
     }
+
 }
