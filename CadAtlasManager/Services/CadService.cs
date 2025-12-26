@@ -181,10 +181,14 @@ namespace CadAtlasManager
 
                         if (btrId != ObjectId.Null)
                         {
-                            // 这里我们仍然调用命令来让用户交互式放置位置，
-                            // 但此时块定义已经通过 API 完美载入，命令只需处理插入点
-                            string cmd = $"_.INSERT \"{blockName}\" \\ 1 1 0 ";
-                            doc.SendStringToExecute(cmd, true, false, false);
+                            // 使用 LISP 的 (command) 函数，这是最稳定的交互式插入方法
+                            // _-insert: 强制命令行插入
+                            // pause: 等于原来的 \\，让用户点选位置
+                            // \"1\" \"1\" \"0\": 分别是 X比例、Y比例、旋转角度
+                            string lispCmd = $"(command \"_-insert\" \"{blockName}\" pause \"1\" \"1\" \"0\") ";
+
+                            // 注意：这里第二个参数设为 false，防止自动加空格干扰 LISP 语法
+                            doc.SendStringToExecute(lispCmd, false, false, false);
                         }
 
                         tr.Commit();
