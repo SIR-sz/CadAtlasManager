@@ -17,6 +17,34 @@ namespace CadAtlasManager
     {
         public void Initialize() { }
         public void Terminate() { }
+        /// <summary>
+        /// 优化打印环境：关闭后台打印、打印戳记和日志，提升批量打印稳定性
+        /// </summary>
+        private static void OptimizePlotEnvironment()
+        {
+            try
+            {
+                // 1. 关闭后台打印 (0 = 关闭)
+                // 这是解决 2021/2024 版本批量打印崩溃、报错“任务已在进行中”的核心设置
+                Autodesk.AutoCAD.ApplicationServices.Application.SetSystemVariable("BACKGROUNDPLOT", 0);
+
+                // 2. 关闭打印戳记 (0 = 关闭)
+                // 戳记会触发额外的渲染逻辑，关闭后可提速
+                Autodesk.AutoCAD.ApplicationServices.Application.SetSystemVariable("PLOTSTAMP", 0);
+
+                // 3. 关闭打印日志记录 (0 = 关闭)
+                // 防止每打印一张图就写一次 XML/CSV 日志，减少磁盘 I/O 开销
+                Autodesk.AutoCAD.ApplicationServices.Application.SetSystemVariable("PLOTLOG", 0);
+
+                // 4. (可选) 设置 EXPERT 变量，抑制某些打印警告对话框 (1 = 抑制部分提示)
+                Autodesk.AutoCAD.ApplicationServices.Application.SetSystemVariable("EXPERT", 1);
+            }
+            catch (System.Exception ex)
+            {
+                // 静默处理，防止某些精简版 CAD 不支持某些变量导致崩溃
+                System.Diagnostics.Debug.WriteLine("优化环境失败: " + ex.Message);
+            }
+        }
         // [CadService.cs] 内部添加此方法
         private static void EnsureMetricUnits(Document doc)
         {
@@ -239,6 +267,8 @@ namespace CadAtlasManager
         // [CadService.cs]
         public static List<string> BatchPlotByTitleBlocks(string dwgPath, string outputDir, BatchPlotConfig config)
         {
+            // --- 新增：打印前优化环境 ---
+            OptimizePlotEnvironment();
             List<string> generatedFiles = new List<string>();
             Autodesk.AutoCAD.ApplicationServices.Document doc = null;
             bool isOpenedByUs = false;
@@ -847,6 +877,8 @@ namespace CadAtlasManager
         /// </summary>
         public static PlotFileResult EnhancedBatchPlot(string dwgPath, string outputDir, BatchPlotConfig config)
         {
+            // --- 新增：打印前优化环境 ---
+            OptimizePlotEnvironment();
             var result = new PlotFileResult { FilePath = dwgPath, FileName = Path.GetFileName(dwgPath) };
             Document doc = null;
             bool isOpenedByUs = false;
