@@ -111,14 +111,62 @@ namespace CadAtlasManager
             return File.GetLastWriteTimeUtc(dwgPath).Ticks.ToString();
         }
 
-        public static void InsertDwgAsBlock(string f)
+        public static void InsertDwgAsBlock(string filePath)
         {
-            if (!File.Exists(f)) return;
+            if (!File.Exists(filePath)) return;
+
             Document doc = Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-            doc.Window.Focus();
-            string cmd = $"-INSERT \"{f}\" ";
-            doc.SendStringToExecute(cmd, true, false, false);
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            // 聚焦 CAD 窗口
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
+            try
+            {
+                using (doc.LockDocument()) // 必须锁定文档
+                {
+                    string blockName = Path.GetFileNameWithoutExtension(filePath);
+
+                    using (Transaction tr = db.TransactionManager.StartTransaction())
+                    {
+                        BlockTable bt = tr.GetObject(db.BlockTableId, OpenMode.ForRead) as BlockTable;
+                        ObjectId btrId = ObjectId.Null;
+
+                        // 检查同名块
+                        if (bt.Has(blockName))
+                        {
+                            // 方案：如果已存在，则直接引用现有块定义，或者你可以选择自动重命名
+                            btrId = bt[blockName];
+                            ed.WriteMessage($"\n[提示] 块 \"{blockName}\" 已存在，将直接插入现有定义。");
+                        }
+                        else
+                        {
+                            // 使用数据库插入 API，这是最稳定的方式
+                            using (Database sourceDb = new Database(false, true))
+                            {
+                                sourceDb.ReadDwgFile(filePath, FileShare.Read, true, "");
+                                btrId = db.Insert(blockName, sourceDb, true);
+                            }
+                        }
+
+                        if (btrId != ObjectId.Null)
+                        {
+                            // 这里我们仍然调用命令来让用户交互式放置位置，
+                            // 但此时块定义已经通过 API 完美载入，命令只需处理插入点
+                            string cmd = $"_.INSERT \"{blockName}\" \\ 1 1 0 ";
+                            doc.SendStringToExecute(cmd, true, false, false);
+                        }
+
+                        tr.Commit();
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage($"\n[错误] 块插入失败: {ex.Message}");
+            }
         }
 
         public static void OpenDwg(string sourcePath, string mode, string targetCopyPath = null)
@@ -238,24 +286,29 @@ namespace CadAtlasManager
                         for (int i = 0; i < titleBlocks.Count; i++)
                         {
                             var tb = titleBlocks[i];
-                            string fileName = Path.GetFileNameWithoutExtension(dwgPath);
+                            string baseName = Path.GetFileNameWithoutExtension(dwgPath);
 
-                            // 命名规则：如果有多张图则添加 _01, _02 这种后缀
-                            if (titleBlocks.Count > 1)
-                                fileName += $"_{(i + 1):D2}";
+                            // 【关键修改点】：删除了判断条件，强制为所有导出的 PDF 添加序号后缀
+                            // 这样即便只有 1 张图，也会命名为 "文件名_01.pdf"
+                            string fileNameWithSuffix = $"{baseName}_{(i + 1):D2}";
 
-                            string fullPdfPath = Path.Combine(outputDir, fileName + ".pdf");
+                            string fullPdfPath = Path.Combine(outputDir, fileNameWithSuffix + ".pdf");
 
                             if (PlotFactory.ProcessPlotState == ProcessPlotState.NotPlotting)
                             {
+                                // 执行打印
                                 if (PrintExtent(doc, targetLayout, tb, config, fullPdfPath, i + 1, titleBlocks.Count))
                                 {
-                                    generatedFiles.Add(fileName + ".pdf");
+                                    // 将带后缀的文件名添加到返回列表
+                                    generatedFiles.Add(fileNameWithSuffix + ".pdf");
+
+                                    // 保存打印记录，确保元数据关联的是带后缀的新路径
                                     PlotMetaManager.SavePlotRecord(dwgPath, fullPdfPath);
                                 }
                             }
                         }
-                        // 修正：删除了原代码中错误的 result.IsSuccess = true 等行，直接提交事务
+
+                        // 提交事务
                         tr.Commit();
                     }
                 }
@@ -851,17 +904,27 @@ namespace CadAtlasManager
 
                         for (int i = 0; i < titleBlocks.Count; i++)
                         {
-                            string fileName = Path.GetFileNameWithoutExtension(dwgPath);
-                            if (titleBlocks.Count > 1) fileName += $"_{(i + 1):D2}";
-                            string fullPdfPath = Path.Combine(outputDir, fileName + ".pdf");
+                            // 1. 获取不带后缀的基础文件名
+                            string baseName = Path.GetFileNameWithoutExtension(dwgPath);
 
+                            // 2. 强制生成带序号的文件名 (例如: 文件名_01.pdf)
+                            // 注意：这里将变量名统一，防止出现 fileNameWithoutExt 未定义的错误
+                            string finalPdfName = $"{baseName}_{(i + 1):D2}.pdf";
+
+                            // 3. 使用【带序号】的文件名合成完整路径
+                            string fullPdfPath = Path.Combine(outputDir, finalPdfName);
+
+                            // 4. 执行打印，传入正确的 fullPdfPath
                             if (PrintExtent(doc, layout, titleBlocks[i], config, fullPdfPath, i + 1, titleBlocks.Count))
                             {
-                                // 修正：此处应添加到 result 对象的列表中
-                                result.GeneratedPdfs.Add(fileName + ".pdf");
+                                // 5. 修正：将【带序号】的文件名添加到结果列表
+                                result.GeneratedPdfs.Add(finalPdfName);
+
+                                // 6. 保存记录，确保指纹关联的是带序号的 PDF
                                 PlotMetaManager.SavePlotRecord(dwgPath, fullPdfPath);
                             }
                         }
+
                         result.IsSuccess = true;
                         result.PageCount = result.GeneratedPdfs.Count;
                         tr.Commit();

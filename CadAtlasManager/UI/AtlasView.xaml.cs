@@ -1489,7 +1489,27 @@ namespace CadAtlasManager
             catch { }
         }
         // 在 AtlasView.xaml.cs 中添加
-        // [AtlasView.xaml.cs]
+        private void SafeSetClipboardText(string text)
+        {
+            for (int i = 0; i < 5; i++) // 尝试 5 次
+            {
+                try
+                {
+                    System.Windows.Clipboard.SetText(text);
+                    return; // 成功则退出
+                }
+                catch (System.Runtime.InteropServices.COMException ex)
+                {
+                    // 如果是剪贴板被占用错误 (0x800401D0)
+                    if ((uint)ex.ErrorCode == 0x800401D0)
+                    {
+                        System.Threading.Thread.Sleep(50); // 等待 50ms 重试
+                        continue;
+                    }
+                    throw; // 其他 COM 错误则抛出
+                }
+            }
+        }
         private void MenuItem_InsertXref_Click(object sender, RoutedEventArgs e)
         {
             // 1. 获取当前选中的文件
@@ -1498,6 +1518,7 @@ namespace CadAtlasManager
             if (item != null && item.Type == ExplorerItemType.File)
             {
                 string fullPath = item.FullPath;
+                SafeSetClipboardText(fullPath);
                 string ext = System.IO.Path.GetExtension(fullPath).ToLower();
 
                 // 2. 将文件路径复制到系统剪贴板，方便用户在弹出窗口中 Ctrl+V
