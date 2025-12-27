@@ -50,6 +50,10 @@ namespace CadAtlasManager
                             PaletteSetStyles.Snappable;
 
                 _myView = new AtlasView();
+                // 【关键修复】显式设置 WPF 视图在容器内的对齐方式
+                _myView.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+                _myView.VerticalAlignment = System.Windows.VerticalAlignment.Stretch;
+
                 _ps.AddVisual("图集库", _myView);
 
                 // 修改点 3：从配置中恢复面板的初始大小

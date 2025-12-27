@@ -76,8 +76,14 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Bcl">
+      <Version>1.1.8</Version>
+    </PackageReference>
     <PackageReference Include="Microsoft.Bcl.Async">
       <Version>1.0.168</Version>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Bcl.Build">
+      <Version>1.0.14</Version>
     </PackageReference>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net40">
       <Version>1.0.3</Version>
