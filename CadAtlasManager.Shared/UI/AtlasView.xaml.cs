@@ -113,6 +113,13 @@ namespace CadAtlasManager
 
             InitializeComponent();
 
+            // --- 【新增：解决 R18 窗口分离问题的强力补丁】 ---
+            this.HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch;
+            this.VerticalAlignment = System.Windows.VerticalAlignment.Stretch;
+            // 强制不设置固定宽高
+            this.Width = double.NaN;
+            this.Height = double.NaN;
+
             FileTree.ItemsSource = Items;
             ProjectTree.ItemsSource = ProjectTreeItems;
             PlotFolderTree.ItemsSource = PlotFolderItems;

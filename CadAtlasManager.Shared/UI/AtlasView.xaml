@@ -6,8 +6,10 @@
              xmlns:local="clr-namespace:CadAtlasManager"
              mc:Ignorable="d" 
              d:DesignHeight="700" d:DesignWidth="350" Background="#f0f0f0"
-             HorizontalAlignment="Stretch"
-             VerticalAlignment="Stretch">
+             HorizontalAlignment="Stretch" 
+             VerticalAlignment="Stretch"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
 
     <UserControl.Resources>
         <local:BooleanToAngleConverter x:Key="BoolToAngleConverter"/>
