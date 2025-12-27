@@ -1,6 +1,13 @@
-﻿using Autodesk.AutoCAD.Runtime;
-using Autodesk.AutoCAD.Windows;
-using System; // 新增
+﻿using Autodesk.AutoCAD.Windows;
+using System;
+using Autodesk.AutoCAD.Runtime;
+
+// 使用条件编译别名处理 Application 类的位置变化
+#if CAD2012
+using AcApp = Autodesk.AutoCAD.ApplicationServices.Application;
+#else
+using AcApp = Autodesk.AutoCAD.ApplicationServices.Core.Application;
+#endif
 
 [assembly: ExtensionApplication(typeof(CadAtlasManager.MainPlugin))] // 必须定义程序集入口
 [assembly: CommandClass(typeof(CadAtlasManager.MainPlugin))]
@@ -17,7 +24,8 @@ namespace CadAtlasManager
 
         public void Initialize()
         {
-            // 插件加载时执行的逻辑（可选）
+            // 将所有 Application.DocumentManager 替换为 AcApp.DocumentManager
+            var doc = AcApp.DocumentManager.MdiActiveDocument;
         }
 
         public void Terminate()

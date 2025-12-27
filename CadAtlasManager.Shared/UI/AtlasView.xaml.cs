@@ -10,7 +10,6 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.IO.Compression; // 引用 System.IO.Compression.FileSystem
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -21,6 +20,8 @@ using System.Windows.Media.Animation;
 using AcApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using UserControl = System.Windows.Controls.UserControl;
 using WinForms = System.Windows.Forms;
+
+
 
 namespace CadAtlasManager
 {
@@ -1775,69 +1776,48 @@ namespace CadAtlasManager
         // =================================================================
         private void MenuItem_Zip_Click(object sender, RoutedEventArgs e)
         {
-            // 1. 获取选中项：优先取勾选的，没勾选取选中的
             var selectedItems = GetAllSelectedItems();
             if (selectedItems.Count == 0)
             {
                 var current = GetSelectedItem();
                 if (current != null) selectedItems.Add(current);
             }
-
             if (selectedItems.Count == 0) return;
 
-            // 2. 确定保存路径
             string firstPath = selectedItems[0].FullPath;
-
-            // 【关键修改】：不再判断是否为文件夹，统一取父目录 Path.GetDirectoryName
-            // 这样如果打包文件夹 A，zip 会默认出现在 A 的旁边，而不是 A 的里面
             string defaultPath = Path.GetDirectoryName(firstPath);
-
-            // 防御性处理：如果是根目录，则维持原样
             if (string.IsNullOrEmpty(defaultPath)) defaultPath = firstPath;
 
             string defaultName = $"打包_{DateTime.Now:yyyyMMdd_HHmm}.zip";
-            var dlg = new ZipSaveDialog(defaultPath, defaultName);
+            var dlg = new ZipSaveDialog(defaultPath, defaultName); // 建议将此对话框也放入 UI 文件夹
 
             if (dlg.ShowDialog() == true)
             {
                 string zipFullPath = Path.Combine(dlg.SelectedPath, dlg.FileName);
                 try
                 {
-                    // 如果目标文件已存在，先尝试删除（防止占用报错）
                     if (File.Exists(zipFullPath))
                     {
                         if (MessageBox.Show("压缩包已存在，是否覆盖？", "提示", MessageBoxButton.YesNo) == MessageBoxResult.No)
                             return;
-                        File.Delete(zipFullPath);
                     }
 
-                    using (ZipArchive archive = ZipFile.Open(zipFullPath, ZipArchiveMode.Create))
-                    {
-                        foreach (var item in selectedItems)
-                        {
-                            if (item.Type == ExplorerItemType.File)
-                                archive.CreateEntryFromFile(item.FullPath, item.Name);
-                            else
-                                AddFolderToZip(archive, item.FullPath, item.Name);
-                        }
-                    }
+                    // --- 关键改动：调用统一的 Service ---
+                    // 这样代码里就不会出现 ZipArchive，R18 编译器就不会抗议了
+                    CadAtlasManager.Services.ZipService.CreateZipFromItems(selectedItems, zipFullPath);
 
                     if (MessageBox.Show("打包成功！是否打开所在文件夹？", "完成", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
                     {
-                        Process.Start("explorer.exe", $"/select,\"{zipFullPath}\"");
+                        System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{zipFullPath}\"");
                     }
                 }
                 catch (Exception ex) { MessageBox.Show("打包失败: " + ex.Message); }
             }
         }
 
-        private void AddFolderToZip(ZipArchive archive, string sourceDir, string entryPrefix)
-        {
-            foreach (string file in Directory.GetFiles(sourceDir))
-                archive.CreateEntryFromFile(file, Path.Combine(entryPrefix, Path.GetFileName(file)));
-            foreach (string dir in Directory.GetDirectories(sourceDir))
-                AddFolderToZip(archive, dir, Path.Combine(entryPrefix, Path.GetFileName(dir)));
-        }
+        // 原来的 AddFolderToZip 方法可以整个删掉了，因为它已经被移动到了 ZipService 中并进行了版本隔离
+
+
 
         private void MenuItem_InsertBlock_Click(object sender, RoutedEventArgs e)
         {

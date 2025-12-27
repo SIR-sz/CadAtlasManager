@@ -982,14 +982,20 @@ namespace CadAtlasManager
         /// <summary>
         /// 启动 CAD 的外部参照附着对话框（针对 DWG）
         /// </summary>
+
         public static void OpenXrefDialog()
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-            doc.Window.Focus();
-            // 使用 XATTACH 命令
+
+            // 替换 doc.Window.Focus(); 
+            // 使用 AutoCAD 通用的设置焦点方法
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
+
             doc.SendStringToExecute("_.XATTACH ", true, false, false);
         }
+
+
 
         /// <summary>
         /// 启动 CAD 的图像附着对话框（针对图片）
@@ -998,7 +1004,7 @@ namespace CadAtlasManager
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-            doc.Window.Focus();
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
             // 使用 IMAGEATTACH 命令，这是专门用于图片的附着窗口
             doc.SendStringToExecute("_.IMAGEATTACH ", true, false, false);
         }
@@ -1010,7 +1016,7 @@ namespace CadAtlasManager
         {
             var doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
             if (doc == null) return;
-            doc.Window.Focus();
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
             // 使用 PDFATTACH 命令，专门用于附着 PDF 参考底图
             doc.SendStringToExecute("_.PDFATTACH ", true, false, false);
         }
@@ -1023,8 +1029,7 @@ namespace CadAtlasManager
             string dwgPath = doc.Name;
 
             // 1. 确保 CAD 窗口获得焦点，防止 GetSelection 立即返回
-            Autodesk.AutoCAD.ApplicationServices.Application.MainWindow.Focus();
-            doc.Window.Focus();
+            Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView();
 
             using (doc.LockDocument())
             {

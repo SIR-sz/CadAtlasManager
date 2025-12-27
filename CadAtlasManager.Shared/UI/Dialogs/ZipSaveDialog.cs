@@ -100,7 +100,23 @@ namespace CadAtlasManager.UI
                 if (string.IsNullOrEmpty(SelectedPath)) { MessageBox.Show("请选择保存路径"); return; }
                 if (string.IsNullOrEmpty(FileName)) { MessageBox.Show("请输入压缩包名称"); return; }
 
-                DialogResult = true;
+                // 1. 拼接最终的压缩包完整路径
+                string finalZipPath = System.IO.Path.Combine(SelectedPath, FileName + ".zip");
+
+                try
+                {
+                    // 2. 调用压缩服务
+                    // 这里的 sourceDir 是你要压缩的文件夹变量名
+                    // CadAtlasManager.Services.ZipService.CreateZip(sourceDir, finalZipPath);
+
+                    DialogResult = true;
+                    MessageBox.Show("打包完成！");
+                    this.Close();
+                }
+                catch (System.Exception ex)
+                {
+                    MessageBox.Show("打包失败：" + ex.Message);
+                }
             };
 
             var btnCancel = new Button { Content = "取消", Width = 80, Height = 32, IsCancel = true };

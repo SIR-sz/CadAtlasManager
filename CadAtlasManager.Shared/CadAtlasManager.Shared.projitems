@@ -11,6 +11,7 @@
   <ItemGroup>
     <Compile Include="$(MSBuildThisFileDirectory)MainPlugin.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Models\BatchPlotConfig.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Models\Compatibility.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Models\FileSystemItem.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Models\PlotCandidate.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Models\PlotResult.cs" />
@@ -51,5 +52,8 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)Services\ZipService.cs" />
   </ItemGroup>
 </Project>

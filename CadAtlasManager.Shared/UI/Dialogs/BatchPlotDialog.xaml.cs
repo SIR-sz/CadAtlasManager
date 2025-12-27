@@ -3,7 +3,6 @@ using CadAtlasManager.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -211,8 +210,14 @@ namespace CadAtlasManager.UI
                 item.Status = "正在打印...";
                 LvFiles.ScrollIntoView(item);
 
-                // 重要：这里的 Delay 会释放 UI 线程，让“取消”按钮的点击事件能够被触发
-                await Task.Delay(100);
+#if CAD2012
+                // .NET 4.0 环境：Thread.Sleep 会阻塞当前线程。
+                // 如果这是在后台任务（Task.Run）中运行，这是安全的。
+                System.Threading.Thread.Sleep(100);
+#else
+                    // .NET 4.5+ 环境：使用异步等待，不阻塞线程。
+                    await System.Threading.Tasks.Task.Delay(100);
+#endif
 
                 try
                 {
@@ -246,8 +251,14 @@ namespace CadAtlasManager.UI
                     // MessageBox.Show($"文件 {item.FileName} 打印失败：\n{ex.Message}");
                 }
 
-                // 处理完一个文件后稍作停顿，确保 UI 刷新
-                await Task.Delay(50);
+#if CAD2012
+                // .NET 4.0 环境：Thread.Sleep 会阻塞当前线程。
+                // 如果这是在后台任务（Task.Run）中运行，这是安全的。
+                System.Threading.Thread.Sleep(100);
+#else
+                    // .NET 4.5+ 环境：使用异步等待，不阻塞线程。
+                    await System.Threading.Tasks.Task.Delay(100);
+#endif
             }
 
             foreach (var dir in affectedDirs)
